@@ -1,0 +1,75 @@
+module.exports = {
+  apps: [
+    // ── Backend (Node.js + Express + TypeScript via tsx)
+    {
+      name: "staffbot-backend",
+      cwd: "/root/staffbot/backend",
+      script: "npm",
+      args: "run dev",
+      interpreter: "none",
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 3000,
+      min_uptime: "10s",
+      out_file: "/var/log/staffbot/backend.log",
+      error_file: "/var/log/staffbot/backend.error.log",
+      merge_logs: true,
+      time: true,
+    },
+
+    // ── RAG Engine (Python FastAPI via uvicorn)
+    {
+      name: "staffbot-rag",
+      cwd: "/root/staffbot/rag-engine",
+      script: "/root/staffbot/rag-engine/.venv/bin/uvicorn",
+      args: "app.main:app --host 0.0.0.0 --port 8000",
+      interpreter: "none",
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 3000,
+      min_uptime: "10s",
+      out_file: "/var/log/staffbot/rag.log",
+      error_file: "/var/log/staffbot/rag.error.log",
+      merge_logs: true,
+      time: true,
+    },
+
+    // ── Worker (BullMQ document indexing worker via tsx)
+    {
+      name: "staffbot-worker",
+      cwd: "/root/staffbot/worker",
+      script: "npm",
+      args: "run dev",
+      interpreter: "none",
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 3000,
+      min_uptime: "10s",
+      out_file: "/var/log/staffbot/worker.log",
+      error_file: "/var/log/staffbot/worker.error.log",
+      merge_logs: true,
+      time: true,
+    },
+
+    // ── Frontend (Next.js production server)
+    {
+      name: "staffbot-frontend",
+      cwd: "/root/staffbot/frontend",
+      script: "npm",
+      args: "run start -- -p 3000",
+      interpreter: "none",
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 3000,
+      min_uptime: "10s",
+      out_file: "/var/log/staffbot/frontend.log",
+      error_file: "/var/log/staffbot/frontend.error.log",
+      merge_logs: true,
+      time: true,
+    },
+  ],
+};

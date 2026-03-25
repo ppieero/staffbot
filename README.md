@@ -1,89 +1,94 @@
-# StaffBot
+# StaffBot — AI Employee Support Platform
 
-AI-powered staff assistant platform with WhatsApp/Telegram integrations, document RAG, and an admin panel.
+Multi-tenant SaaS platform for AI-powered employee support via WhatsApp and Telegram.
 
-## Project Structure
+## Architecture
 
 ```
 staffbot/
-├── backend/          Node.js + Express + TypeScript REST API
-├── frontend/         Next.js 14 admin panel (App Router + Tailwind)
-├── rag-engine/       Python FastAPI + LangChain + Qdrant RAG service
-├── worker/           BullMQ document-indexing queue worker (TypeScript)
-└── docker/           Docker Compose infrastructure
+├── backend/          Node.js + Express + TypeScript — REST API + webhooks
+├── frontend/         Next.js 14 — dashboard for super_admin & company_admin
+├── rag-engine/       Python FastAPI — document indexing + RAG query (Claude + Qdrant)
+├── worker/           Background job processor (BullMQ + Redis)
+└── ecosystem.config.js   PM2 process config
 ```
-
-## Services (docker-compose)
-
-| Service   | Image                  | Port  | Purpose                     |
-|-----------|------------------------|-------|-----------------------------|
-| postgres  | pgvector/pgvector:pg16 | 5432  | Primary database + vectors  |
-| redis     | redis:7-alpine         | 6379  | Cache + BullMQ queues       |
-| qdrant    | qdrant/qdrant:latest   | 6333  | Vector search engine        |
-| adminer   | adminer                | 8080  | Postgres web UI             |
-
-## Quick Start
-
-### 1. Clone & configure
-
-```bash
-cp .env.example .env
-# Fill in your secrets in .env
-```
-
-### 2. Start infrastructure
-
-```bash
-cd docker
-docker compose up -d
-```
-
-### 3. Backend
-
-```bash
-cd backend
-npm install
-npm run dev
-```
-
-### 4. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 5. RAG Engine
-
-```bash
-cd rag-engine
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-### 6. Worker
-
-```bash
-cd worker
-npm install
-npm run dev
-```
-
-## Environment Variables
-
-See `.env.example` for all required variables with descriptions.
 
 ## Tech Stack
 
-- **Backend**: Node.js 20, Express, TypeScript, Prisma
-- **Frontend**: Next.js 14, React, Tailwind CSS, shadcn/ui
-- **RAG Engine**: Python 3.11, FastAPI, LangChain, Qdrant
-- **Worker**: BullMQ, IORedis
-- **Database**: PostgreSQL 16 + pgvector
-- **Cache / Queue**: Redis 7
-- **Vector DB**: Qdrant
-- **Messaging**: WhatsApp Cloud API, Telegram Bot API
-- **Storage**: AWS S3
-- **AI**: Anthropic Claude, OpenAI
+| Layer | Tech |
+|---|---|
+| API | Node.js, Express, TypeScript, Drizzle ORM |
+| Frontend | Next.js 14, React Query, TypeScript |
+| AI | Anthropic Claude Sonnet 4.6, OpenAI embeddings |
+| Vector DB | Qdrant |
+| Database | PostgreSQL 15 |
+| Cache/Queue | Redis, BullMQ |
+| Messaging | WaSender (WhatsApp), Telegram Bot API |
+| Storage | MinIO (S3-compatible) |
+| Reverse proxy | Nginx + Let's Encrypt |
+| Process manager | PM2 |
+
+## Features
+
+- **Multi-tenant**: Isolated data per company, super_admin oversight
+- **RAG pipeline**: Index PDFs/DOCX/TXT → chunk → embed → query with Claude
+- **Multimedia**: Extract and send images/videos from documents via messaging
+- **WhatsApp & Telegram**: Employees ask questions in their preferred channel
+- **Billing dashboard**: Token usage tracking with configurable margin (super_admin)
+- **Welcome messages**: Auto-send onboarding message when employee is created
+- **Impersonation**: Super admin can view any tenant's dashboard
+
+## Setup
+
+### Prerequisites
+- Node.js 20+
+- Python 3.11+
+- PostgreSQL 15
+- Redis 7
+- Qdrant (Docker recommended)
+- MinIO (Docker recommended)
+
+### Quick start
+
+```bash
+# 1. Clone
+git clone <repo-url>
+cd staffbot
+
+# 2. Configure environment
+cp backend/.env.example backend/.env
+cp rag-engine/.env.example rag-engine/.env
+cp frontend/.env.example frontend/.env
+# Edit each .env with your real values
+
+# 3. Install dependencies
+cd backend && npm install
+cd ../frontend && npm install
+cd ../rag-engine && pip install -r requirements.txt
+cd ../worker && npm install
+
+# 4. Run DB migrations
+cd backend && npm run db:push
+
+# 5. Start with PM2
+cd .. && pm2 start ecosystem.config.js
+```
+
+## API Endpoints (key)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/auth/login | Authenticate |
+| GET | /api/dashboard/stats | Dashboard KPIs |
+| GET/POST | /api/employees | Employee CRUD |
+| GET/POST | /api/profiles | Position profiles |
+| GET/POST | /api/documents | Document upload + indexing |
+| GET | /api/conversations | Conversation history |
+| GET | /api/tokens/summary | Token usage & costs |
+| PUT | /api/tokens/pricing | Update pricing/margin (super_admin) |
+| POST | /webhooks/wasender | WaSender WhatsApp webhook |
+| POST | /webhooks/telegram | Telegram webhook |
+
+## License
+
+Private — All rights reserved.
