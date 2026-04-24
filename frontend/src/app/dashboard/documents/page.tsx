@@ -158,15 +158,16 @@ export default function DocumentsPage() {
 
   const download = useCallback(async (id: string, name: string) => {
     try {
-      const res = await api.get(`/documents/${id}/download`);
-      const { url, filename } = res.data as { url: string; filename: string };
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename ?? name;
-      a.target = "_blank";
+      const res = await api.get(`/documents/${id}/download`, { responseType: "blob" });
+      const blob = new Blob([res.data as BlobPart]);
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch {
       showToast("Download failed");
     }

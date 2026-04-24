@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import * as svc from "../services/document.service";
 import { getProfileById } from "../services/profile.service";
-import { getPresignedDownloadUrl } from "../lib/s3";
 
 function tenantId(req: Request): string | null {
   return req.user!.tenantId ?? null;
@@ -74,7 +73,7 @@ export async function getDocument(req: Request, res: Response): Promise<void> {
   res.json({ data: doc });
 }
 
-// GET /api/documents/:id/download
+// GET /api/documents/:id/download — streams file from MinIO through the backend
 export async function downloadDocument(req: Request, res: Response): Promise<void> {
   const doc = await svc.getDocumentById(tenantId(req), req.params.id);
   if (!doc) {
@@ -86,8 +85,21 @@ export async function downloadDocument(req: Request, res: Response): Promise<voi
     return;
   }
   try {
-    const url = await getPresignedDownloadUrl(doc.fileUrl, doc.fileName ?? doc.name);
-    res.json({ url, filename: doc.fileName ?? doc.name });
+    // Fetch from internal MinIO URL (server-side, no CORS/hostname issues)
+    const minioRes = await fetch(doc.fileUrl);
+    if (!minioRes.ok) {
+      res.status(502).json({ error: `MinIO fetch failed: ${minioRes.status}` });
+      return;
+    }
+    const filename = encodeURIComponent(doc.fileName ?? doc.name);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Type", minioRes.headers.get("content-type") ?? "application/octet-stream");
+    const contentLength = minioRes.headers.get("content-length");
+    if (contentLength) res.setHeader("Content-Length", contentLength);
+
+    // Stream body to client
+    const { Readable } = await import("stream");
+    Readable.fromWeb(minioRes.body as any).pipe(res);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
