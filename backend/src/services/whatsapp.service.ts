@@ -234,8 +234,10 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
   const replyTo = params.groupJid ?? params.from;
   await sendText(replyTo, answer);
 
-  // Send images from document (up to 3, fire-and-forget)
-  for (const img of ragImages.slice(0, 3)) {
+  // Send images from document (up to 2).
+  // WaSender account-protection enforces 1 msg/5s — wait 6s before each image.
+  for (const img of ragImages.slice(0, 2)) {
+    await new Promise(resolve => setTimeout(resolve, 6000));
     await sendImageUrl(replyTo, img.url).catch((e: Error) =>
       console.warn("[wa] image send failed:", e.message)
     );

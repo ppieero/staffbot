@@ -212,6 +212,33 @@ export async function recoverStaleDocuments(staleMinutes = 15) {
   return stale.length;
 }
 
+export async function reindexAllDocuments(tenantId: string | null) {
+  const conditions = [eq(documents.indexingStatus, "indexed")];
+  if (tenantId) conditions.push(eq(documents.tenantId, tenantId));
+
+  const docs = await db
+    .select()
+    .from(documents)
+    .where(and(...conditions));
+
+  for (const doc of docs) {
+    await updateIndexingStatus(doc.id, "pending");
+    await documentIndexQueue.add(
+      "index",
+      {
+        documentId: doc.id,
+        tenantId: doc.tenantId,
+        profileId: doc.profileId,
+        fileUrl: doc.fileUrl,
+        fileType: doc.fileType,
+      },
+      { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
+    );
+  }
+
+  return docs.map((d) => ({ id: d.id, name: d.name }));
+}
+
 export async function reindexDocument(tenantId: string | null, id: string) {
   const doc = await getDocumentById(tenantId, id);
   if (!doc) return null;

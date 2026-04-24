@@ -105,12 +105,22 @@ class RAGQueryService:
         all_images: list = []
         all_videos: set  = set()
 
+        # Threshold: top score minus 0.05 (relative), floored at 0.35.
+        # This handles cross-language queries where scores are naturally lower
+        # (e.g. English query on French docs scores ~0.39 vs same-language 0.55+).
+        top_score = max((r.score for r in results), default=0)
+        image_threshold = max(top_score - 0.05, 0.35)
+        MAX_IMAGES = 10  # cap before messaging layer slices to 2
+
         for r in results:
-            for img in r.payload.get("images", []):
-                if img.get("url") not in seen_imgs:
-                    seen_imgs.add(img["url"])
-                    all_images.append(img)
-            all_videos.update(r.payload.get("video_urls", []))
+            if r.score >= image_threshold:
+                for img in r.payload.get("images", []):
+                    if len(all_images) >= MAX_IMAGES:
+                        break
+                    if img.get("url") not in seen_imgs:
+                        seen_imgs.add(img["url"])
+                        all_images.append(img)
+                all_videos.update(r.payload.get("video_urls", []))
 
             sources.append({
                 "document_id":    r.payload["document_id"],

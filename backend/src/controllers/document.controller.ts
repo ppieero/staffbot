@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import * as svc from "../services/document.service";
 import { getProfileById } from "../services/profile.service";
+import { getPresignedDownloadUrl } from "../lib/s3";
 
 function tenantId(req: Request): string | null {
   return req.user!.tenantId ?? null;
@@ -73,6 +74,25 @@ export async function getDocument(req: Request, res: Response): Promise<void> {
   res.json({ data: doc });
 }
 
+// GET /api/documents/:id/download
+export async function downloadDocument(req: Request, res: Response): Promise<void> {
+  const doc = await svc.getDocumentById(tenantId(req), req.params.id);
+  if (!doc) {
+    res.status(404).json({ error: "Document not found" });
+    return;
+  }
+  if (!doc.fileUrl) {
+    res.status(404).json({ error: "File URL not available" });
+    return;
+  }
+  try {
+    const url = await getPresignedDownloadUrl(doc.fileUrl, doc.fileName ?? doc.name);
+    res.json({ url, filename: doc.fileName ?? doc.name });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // DELETE /api/documents/:id
 export async function deleteDocument(req: Request, res: Response): Promise<void> {
   const result = await svc.deleteDocument(tenantId(req), req.params.id);
@@ -81,6 +101,18 @@ export async function deleteDocument(req: Request, res: Response): Promise<void>
     return;
   }
   res.json({ data: result, meta: { message: "Document deleted and vector removal queued" } });
+}
+
+// POST /api/documents/reindex-all
+export async function reindexAllDocuments(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  if (user.role !== "super_admin" && user.role !== "company_admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const tid = user.role === "company_admin" ? user.tenantId : ((req.body.tenantId as string) ?? null);
+  const queued = await svc.reindexAllDocuments(tid);
+  res.json({ queued: queued.length, documents: queued });
 }
 
 // POST /api/documents/:id/reindex

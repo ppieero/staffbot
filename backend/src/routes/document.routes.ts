@@ -58,8 +58,10 @@ function requireWorkerKey(req: Request, res: Response, next: NextFunction): void
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 router.get("/", authenticate, requireCompanyAdmin, ctrl.listDocuments);
+router.post("/reindex-all", authenticate, ctrl.reindexAllDocuments);
 router.post("/upload", authenticate, requireCompanyAdmin, handleUpload, ctrl.uploadDocument);
 router.get("/:id", authenticate, requireCompanyAdmin, ctrl.getDocument);
+router.get("/:id/download", authenticate, requireCompanyAdmin, ctrl.downloadDocument);
 router.delete("/:id", authenticate, requireCompanyAdmin, ctrl.deleteDocument);
 router.post("/:id/reindex", authenticate, requireCompanyAdmin, ctrl.reindexDocument);
 

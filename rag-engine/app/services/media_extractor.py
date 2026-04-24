@@ -14,6 +14,7 @@ from botocore.config import Config
 
 _VIDEO_PATTERNS = [
     r'https?://(?:www\.)?youtube\.com/watch\?v=[\w-]+',
+    r'https?://(?:www\.)?youtube\.com/shorts/[\w-]+',
     r'https?://youtu\.be/[\w-]+',
     r'https?://(?:www\.)?vimeo\.com/\d+',
     r'https?://(?:www\.)?loom\.com/share/[\w-]+',

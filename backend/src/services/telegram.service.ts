@@ -304,8 +304,10 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
   // ── 12. Send reply ────────────────────────────────────────────────────────
   await sendMessage(chatId, answer);
 
-  // Send images from document (up to 3, fire-and-forget)
-  for (const img of ragImages.slice(0, 3)) {
+  // Send images from document (up to 2).
+  // Add 2s gap between each to avoid Telegram flood-wait errors.
+  for (const img of ragImages.slice(0, 2)) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
     await sendPhoto(chatId, img.url).catch((e: Error) =>
       console.warn("[tg] photo send failed:", e.message)
     );

@@ -154,6 +154,24 @@ export default function DocumentsPage() {
     setConfirmDelete(null);
   }, [qc, showToast]);
 
+  // ── Download ───────────────────────────────────────────────────────────────
+
+  const download = useCallback(async (id: string, name: string) => {
+    try {
+      const res = await api.get(`/documents/${id}/download`);
+      const { url, filename } = res.data as { url: string; filename: string };
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename ?? name;
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      showToast("Download failed");
+    }
+  }, [showToast]);
+
   // ── Reindex ────────────────────────────────────────────────────────────────
 
   const reindex = useCallback(async (id: string) => {
@@ -401,6 +419,29 @@ export default function DocumentsPage() {
                                   ↻
                                 </button>
                               )}
+
+                              <button
+                                onClick={() => download(doc.id, doc.name)}
+                                title="Download"
+                                style={{
+                                  padding: "0.3rem 0.5rem", background: "transparent",
+                                  border: "1px solid transparent", borderRadius: 6,
+                                  color: "var(--text-muted)", fontSize: "0.875rem", cursor: "pointer",
+                                  transition: "all 0.15s",
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.color = "#60a5fa";
+                                  e.currentTarget.style.borderColor = "rgba(96,165,250,0.3)";
+                                  e.currentTarget.style.background = "rgba(96,165,250,0.08)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.color = "var(--text-muted)";
+                                  e.currentTarget.style.borderColor = "transparent";
+                                  e.currentTarget.style.background = "transparent";
+                                }}
+                              >
+                                ↓
+                              </button>
 
                               {confirmDelete === doc.id ? (
                                 <div style={{ display: "flex", gap: "0.25rem" }}>
