@@ -7,6 +7,18 @@ import { resolveTelegramLinkCode } from "./telegram-link.service.js";
 const RAG_URL     = process.env.RAG_ENGINE_URL ?? "http://localhost:8000";
 const MAX_HISTORY = 6;
 
+const LANG_INSTRUCTION: Record<string, string> = {
+  en: "IMPORTANT: You MUST respond in English.",
+  es: "IMPORTANTE: Debes responder en español.",
+  fr: "IMPORTANT: Tu DOIS répondre en français.",
+  pt: "IMPORTANTE: Deves responder em português.",
+  de: "WICHTIG: Du MUSST auf Deutsch antworten.",
+};
+
+function langInstruction(lang: string | null | undefined): string {
+  return LANG_INSTRUCTION[lang ?? "es"] ?? `IMPORTANT: Respond in the language code "${lang}".`;
+}
+
 // ─── Localised strings ────────────────────────────────────────────────────────
 
 const MSG_NOT_REGISTERED: Record<string, string> = {
@@ -247,7 +259,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
         tenant_id:            tenant.id,
         profile_id:           profile.id,
         question:             text,
-        system_prompt:        profile.systemPrompt,
+        system_prompt:        (profile.systemPrompt ? profile.systemPrompt + "\n\n" : "") + langInstruction(lang),
         conversation_history: history,
         embed_provider:       "openai",
       }),

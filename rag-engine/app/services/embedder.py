@@ -31,7 +31,7 @@ def _local_model() -> SentenceTransformer:
 
 @lru_cache(maxsize=1)
 def _openai_client() -> OpenAI:
-    return OpenAI(api_key=get_settings().OPENAI_API_KEY)
+    return OpenAI(api_key=get_settings().OPENAI_API_KEY, timeout=30.0)
 
 
 def embed(texts: list[str], provider: EmbedProvider = "openai") -> list[list[float]]:

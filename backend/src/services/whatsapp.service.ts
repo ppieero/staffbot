@@ -10,6 +10,18 @@ import { verifyCode } from "./whatsapp-verification.service.js";
 const RAG_URL     = process.env.RAG_ENGINE_URL ?? "http://localhost:8000";
 const RAG_TIMEOUT = 30_000;
 
+const LANG_INSTRUCTION: Record<string, string> = {
+  en: "IMPORTANT: You MUST respond in English.",
+  es: "IMPORTANTE: Debes responder en español.",
+  fr: "IMPORTANT: Tu DOIS répondre en français.",
+  pt: "IMPORTANTE: Deves responder em português.",
+  de: "WICHTIG: Du MUSST auf Deutsch antworten.",
+};
+
+function langInstruction(lang: string | null | undefined): string {
+  return LANG_INSTRUCTION[lang ?? "es"] ?? `IMPORTANT: Respond in the language code "${lang}".`;
+}
+
 export interface IncomingMessage {
   from:        string; // phone number digits only
   waMessageId: string;
@@ -173,7 +185,8 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
         tenant_id: tenant.id, profile_id: profileId,
         question: text,
         system_prompt: (systemPrompt ? systemPrompt + "\n\n" : "") +
-          "IMPORTANT: You are responding via WhatsApp messaging. Keep responses concise and conversational. Maximum 3-4 paragraphs.",
+          "IMPORTANT: You are responding via WhatsApp messaging. Keep responses concise and conversational. Maximum 3-4 paragraphs.\n\n" +
+          langInstruction(employee.languagePref),
         conversation_history: history, embed_provider: "openai",
       }),
       signal: controller.signal,
@@ -212,6 +225,10 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
   });
   await db.update(conversations).set({ lastMessageAt: new Date() })
     .where(eq(conversations.id, conversation.id));
+
+  // Random delay 2–15s to simulate natural response time
+  const delayMs = (Math.floor(Math.random() * 14) + 2) * 1000;
+  await new Promise(resolve => setTimeout(resolve, delayMs));
 
   // Send to group or personal chat
   const replyTo = params.groupJid ?? params.from;

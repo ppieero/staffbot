@@ -1,4 +1,4 @@
-import { and, count, desc, eq, SQL } from "drizzle-orm";
+import { and, count, desc, eq, lt, SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
 import { documents } from "../db/schema";
@@ -170,12 +170,46 @@ export async function updateIndexingStatus(
     .set({
       indexingStatus: status,
       ...(chunkCount !== undefined ? { chunkCount } : {}),
-      ...(errorMessage !== undefined ? { errorMessage } : {}),
+      // Clear error on success; set it on explicit error; leave it unchanged otherwise
+      ...(status === "indexed" ? { errorMessage: null } : errorMessage !== undefined ? { errorMessage } : {}),
       updatedAt: new Date(),
     })
     .where(eq(documents.id, documentId))
     .returning();
   return updated ?? null;
+}
+
+/**
+ * Reset documents stuck in "processing" for longer than `staleMinutes` back to
+ * "pending" and re-queue them. Called on a periodic interval at startup.
+ */
+export async function recoverStaleDocuments(staleMinutes = 15) {
+  const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
+
+  const stale = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.indexingStatus, "processing"), lt(documents.updatedAt, cutoff)));
+
+  if (stale.length === 0) return 0;
+
+  for (const doc of stale) {
+    await updateIndexingStatus(doc.id, "pending");
+    await documentIndexQueue.add(
+      "index",
+      {
+        documentId: doc.id,
+        tenantId: doc.tenantId,
+        profileId: doc.profileId,
+        fileUrl: doc.fileUrl,
+        fileType: doc.fileType,
+      },
+      { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
+    );
+    console.log(`[recovery] document ${doc.id} (${doc.name}) reset to pending after ${staleMinutes}m in processing`);
+  }
+
+  return stale.length;
 }
 
 export async function reindexDocument(tenantId: string | null, id: string) {

@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
+import { recoverStaleDocuments } from "./services/document.service";
 import authRoutes from "./routes/auth.routes";
 import tenantRoutes from "./routes/tenant.routes";
 import profileRoutes from "./routes/profile.routes";
@@ -51,6 +52,13 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 app.listen(port, () => {
   console.log(`[backend] listening on port ${port}`);
+
+  // Recover documents stuck in "processing" on startup and every 5 minutes
+  recoverStaleDocuments().catch((e) => console.error("[recovery] startup error:", e));
+  setInterval(
+    () => recoverStaleDocuments().catch((e) => console.error("[recovery] interval error:", e)),
+    5 * 60 * 1000
+  );
 });
 
 export default app;

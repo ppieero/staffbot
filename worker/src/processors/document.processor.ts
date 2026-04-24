@@ -43,14 +43,14 @@ async function processIndexJob(job: Job<DocumentIndexJob>) {
   // Mark as processing
   await updateDocumentStatus(documentId, "processing");
 
-  // Call RAG engine
+  // Call RAG engine (10-minute timeout for large documents)
   const response = await axios.post(`${ragUrl}/index`, {
     document_id: documentId,
     tenant_id: tenantId,
     profile_id: profileId,
     file_url: fileUrl,
     file_type: fileType,
-  });
+  }, { timeout: 600_000 });
 
   const { chunk_count } = response.data;
 

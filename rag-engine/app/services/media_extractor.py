@@ -51,6 +51,8 @@ def _upload_image(img_bytes: bytes, ext: str, tenant_id: str, document_id: str, 
 
 # ── Per-format extractors ─────────────────────────────────────────────────────
 
+MAX_IMAGES_PER_DOCUMENT = 50   # cap to avoid unbounded MinIO uploads blocking the event loop
+
 def _extract_pdf(content: bytes, tenant_id: str, document_id: str) -> Dict[str, Any]:
     import fitz  # pymupdf
 
@@ -64,7 +66,12 @@ def _extract_pdf(content: bytes, tenant_id: str, document_id: str) -> Dict[str, 
         pages_text.append(text)
         video_urls.extend(_VIDEO_RE.findall(text))
 
+        if len(images) >= MAX_IMAGES_PER_DOCUMENT:
+            continue  # still extract text from remaining pages
+
         for img_info in page.get_images(full=True):
+            if len(images) >= MAX_IMAGES_PER_DOCUMENT:
+                break
             try:
                 xref       = img_info[0]
                 base_image = doc.extract_image(xref)
