@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { setLang, type Lang } from "@/lib/i18n";
 
 const LANGUAGES = [
   { value: "es", label: "Español" },
@@ -80,6 +81,7 @@ export default function SettingsPage() {
     try {
       await api.put("/users/me", form);
       qc.invalidateQueries({ queryKey: ["user-me"] });
+      if (form?.languagePref) setLang(form.languagePref as Lang);
       showToast("Settings saved", true);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error;

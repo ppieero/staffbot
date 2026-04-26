@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import { clearTokens, getCurrentUser } from "@/lib/auth";
 import api from "@/lib/api";
+import { setLang, useTranslation, type Lang } from "@/lib/i18n";
 
 const NAV = [
   {
@@ -75,7 +76,7 @@ const NAV = [
   },
   {
     href: "/dashboard/manuales",
-    label: "Manuales",
+    label: "nav.manuals",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
@@ -112,6 +113,7 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { t } = useTranslation();
   const [user, setUser] = useState({ name: "Loading…", role: "", initials: "…" });
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [impersonating, setImpersonating] = useState<{ tenantName: string; adminEmail: string } | null>(null);
@@ -135,6 +137,7 @@ export default function DashboardLayout({
       const fullName  = [firstName, lastName].filter(Boolean).join(" ") || profile.email || profile.role;
       const initials  = [(firstName[0] ?? ""), (lastName[0] ?? "")].filter(Boolean).join("").toUpperCase() || fullName.slice(0, 2).toUpperCase();
       setUser({ name: fullName, role: profile.role, initials });
+      if (profile.languagePref) setLang(profile.languagePref as Lang);
     }).catch(() => {/* keep placeholder */});
   }, []);
 
@@ -243,7 +246,7 @@ export default function DashboardLayout({
                   }}
                 >
                   {item.icon}
-                  {item.label}
+                  {t(item.label)}
                 </a>
               );
             }

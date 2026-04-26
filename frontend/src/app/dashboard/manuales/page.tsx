@@ -2,6 +2,7 @@
 import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
   published:  { bg: "rgba(74,222,128,0.1)",  color: "#4ade80", label: "Published" },
@@ -23,6 +24,7 @@ interface Manual {
 }
 
 export default function ManualesPage() {
+  const { t }        = useTranslation();
   const qc           = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<"docs" | "videos">("docs");
@@ -118,9 +120,9 @@ export default function ManualesPage() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
         <div>
-          <h1 style={{ fontSize: "1.375rem", fontWeight: 700, color: "var(--text-primary)" }}>Manuales</h1>
+          <h1 style={{ fontSize: "1.375rem", fontWeight: 700, color: "var(--text-primary)" }}>{t("manuals.title")}</h1>
           <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
-            AI-generated web manuals for your team
+            {t("manuals.subtitle")}
           </p>
         </div>
         {tab === "docs" && (
