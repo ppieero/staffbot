@@ -44,6 +44,7 @@ function StatusLabel({ status }: { status: string }) {
 
 interface Manual {
   id:             string;
+  tenantId:       string;
   title:          string;
   slug:           string;
   status:         string;
@@ -53,6 +54,9 @@ interface Manual {
   videoUrl:       string | null;
   videoDuration:  number | null;
   tenantSlug:     string;
+  profileIds:     string[];
+  ragIndexed:     boolean;
+  ragChunks:      number;
   createdAt:      string;
 }
 
@@ -132,6 +136,50 @@ export default function ManualesPage() {
     }
   };
 
+  const [editingProfiles, setEditingProfiles] = useState<string | null>(null);
+  const [profileSelection, setProfileSelection] = useState<string[]>([]);
+
+  const { data: profilesData } = useQuery({
+    queryKey: ["profiles"],
+    queryFn:  () => api.get("/profiles?limit=100").then(r => r.data),
+  });
+  interface Profile { id: string; name: string; tenantId: string }
+  const allProfiles: Profile[] = profilesData?.data ?? [];
+
+  const handleEditProfiles = (m: Manual) => {
+    setProfileSelection(m.profileIds ?? []);
+    setEditingProfiles(m.id);
+  };
+
+  const handleSaveProfiles = async (manualId: string) => {
+    if (profileSelection.length === 0) return showToast("Select at least one profile");
+    try {
+      await api.patch(`/manuals/${manualId}/profile-assignment`, { profileIds: profileSelection });
+      qc.invalidateQueries({ queryKey: ["manuals"] });
+      setEditingProfiles(null);
+      showToast("Profile assignment saved", true);
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      showToast(msg || "Save failed");
+    }
+  };
+
+  const handleToggleIndex = async (m: Manual) => {
+    try {
+      if (m.ragIndexed) {
+        await api.delete(`/manuals/${m.id}/index`);
+        showToast("Removed from RAG index", true);
+      } else {
+        const res = await api.post(`/manuals/${m.id}/index`);
+        showToast(`Indexed ${(res.data as { chunks: number }).chunks} sections into RAG`, true);
+      }
+      qc.invalidateQueries({ queryKey: ["manuals"] });
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      showToast(msg || "Index operation failed");
+    }
+  };
+
   const handleDelete = async (id: string, title: string) => {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
     try {
@@ -205,6 +253,36 @@ export default function ManualesPage() {
               <p style={{ fontSize: "0.75rem", color: "#f87171", marginTop: "0.375rem" }}>
                 Generation failed — try re-uploading the file.
               </p>
+            )}
+            {m.status === "published" && (
+              <>
+                {/* Profile chips */}
+                {allProfiles.length > 0 && (
+                  <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.5rem", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)" }}>Profiles:</span>
+                    {allProfiles.filter((p) => p.tenantId === m.tenantId).map((p) => {
+                      const assigned = (m.profileIds ?? []).includes(p.id);
+                      return (
+                        <span key={p.id} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 99, border: `1px solid ${assigned ? "rgba(99,102,241,0.4)" : "var(--border)"}`, background: assigned ? "rgba(99,102,241,0.1)" : "transparent", color: assigned ? "var(--accent)" : "var(--text-muted)", fontWeight: assigned ? 600 : 400 }}>
+                          {assigned && "✓ "}{p.name}
+                        </span>
+                      );
+                    })}
+                    <button onClick={() => handleEditProfiles(m)} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                      Edit ✎
+                    </button>
+                  </div>
+                )}
+                {/* RAG status */}
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.375rem" }}>
+                  <span style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 99, border: `1px solid ${m.ragIndexed ? "rgba(74,222,128,0.3)" : "rgba(148,163,184,0.3)"}`, background: m.ragIndexed ? "rgba(74,222,128,0.1)" : "transparent", color: m.ragIndexed ? "#4ade80" : "var(--text-muted)", fontWeight: 600 }}>
+                    {m.ragIndexed ? `🧠 RAG — ${m.ragChunks} sections` : "🧠 Not indexed"}
+                  </span>
+                  <button onClick={() => handleToggleIndex(m)} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                    {m.ragIndexed ? "Remove" : "Index into RAG"}
+                  </button>
+                </div>
+              </>
             )}
           </div>
           <button
@@ -379,6 +457,40 @@ export default function ManualesPage() {
           ) : (
             videoManuals.map(m => <ManualCard key={m.id} m={m} />)
           )}
+        </div>
+      )}
+
+      {editingProfiles && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setEditingProfiles(null)}>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 14, padding: "1.75rem", width: 460, maxWidth: "90vw" }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.375rem" }}>Assign profiles</h2>
+            <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>Select all profiles that should see this manual in their bot context.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1.25rem" }}>
+              {allProfiles.map((p) => {
+                const on = profileSelection.includes(p.id);
+                return (
+                  <div key={p.id}
+                    onClick={() => setProfileSelection(prev => on ? prev.filter(x => x !== p.id) : [...prev, p.id])}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.75rem 1rem", border: `1px solid ${on ? "rgba(99,102,241,0.4)" : "var(--border)"}`, borderRadius: 9, cursor: "pointer", background: on ? "rgba(99,102,241,0.06)" : "transparent" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.625rem" }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(99,102,241,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.875rem" }}>👤</div>
+                      <span style={{ fontSize: "0.875rem", fontWeight: 500, color: "var(--text-primary)" }}>{p.name}</span>
+                    </div>
+                    <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${on ? "var(--accent)" : "var(--border)"}`, background: on ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.75rem", color: "#fff", fontWeight: 700 }}>
+                      {on && "✓"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {profileSelection.length === 0 && (
+              <p style={{ fontSize: "0.75rem", color: "#f87171", marginBottom: "0.75rem" }}>Select at least one profile</p>
+            )}
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+              <button onClick={() => setEditingProfiles(null)} style={{ padding: "0.5rem 1rem", background: "transparent", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: "0.875rem", cursor: "pointer" }}>Cancel</button>
+              <button onClick={() => handleSaveProfiles(editingProfiles)} disabled={profileSelection.length === 0} style={{ padding: "0.5rem 1.25rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: "pointer", opacity: profileSelection.length === 0 ? 0.5 : 1 }}>Save</button>
+            </div>
+          </div>
         </div>
       )}
 

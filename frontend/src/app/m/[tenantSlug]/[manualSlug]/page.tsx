@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 
 interface Section {
   id:          string;
@@ -19,10 +19,15 @@ interface Manual {
   sections:   Section[];
 }
 
-export default function ManualViewerPage() {
+function ManualViewerContent() {
   const { tenantSlug, manualSlug } = useParams<{ tenantSlug: string; manualSlug: string }>();
+  const searchParams               = useSearchParams();
   const [manual, setManual]        = useState<Manual | null>(null);
-  const [activeSection, setActive] = useState(0);
+  const [activeSection, setActive] = useState(() => {
+    const s = searchParams.get("s");
+    const n = s !== null ? parseInt(s, 10) : NaN;
+    return isNaN(n) ? 0 : n;
+  });
   const [loading, setLoading]      = useState(true);
   const [error, setError]          = useState("");
 
@@ -31,7 +36,10 @@ export default function ManualViewerPage() {
       .then(r => r.json())
       .then((d: Manual & { error?: string }) => {
         if (d.error) setError(d.error);
-        else setManual(d);
+        else {
+          setManual(d);
+          setActive(prev => Math.min(prev, d.sections.length - 1));
+        }
       })
       .catch(() => setError("Could not load manual"))
       .finally(() => setLoading(false));
@@ -198,5 +206,13 @@ export default function ManualViewerPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function ManualViewerPage() {
+  return (
+    <Suspense>
+      <ManualViewerContent />
+    </Suspense>
   );
 }

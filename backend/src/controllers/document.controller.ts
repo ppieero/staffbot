@@ -137,6 +137,23 @@ export async function reindexDocument(req: Request, res: Response): Promise<void
   res.json({ data: result, meta: { message: "Reindex job queued" } });
 }
 
+// PATCH /api/documents/:id/profile-assignment
+export async function patchProfileAssignment(req: Request, res: Response): Promise<void> {
+  const { profileIds } = req.body as { profileIds?: string[] };
+
+  if (!Array.isArray(profileIds) || profileIds.length === 0) {
+    res.status(422).json({ error: "profileIds must be a non-empty array" });
+    return;
+  }
+
+  const updated = await svc.updateProfileAssignment(tenantId(req), req.params.id, profileIds);
+  if (!updated) {
+    res.status(404).json({ error: "Document not found or profiles invalid" });
+    return;
+  }
+  res.json({ data: updated });
+}
+
 // PATCH /api/documents/:id/status  (internal — called by worker)
 export async function patchDocumentStatus(req: Request, res: Response): Promise<void> {
   const { status, chunkCount, errorMessage } = req.body as {

@@ -1,7 +1,7 @@
-import { and, count, desc, eq, lt, SQL } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
-import { documents } from "../db/schema";
+import { documents, positionProfiles } from "../db/schema";
 import { uploadFile, deleteFile } from "../lib/s3";
 import { documentIndexQueue, documentDeleteQueue } from "../lib/queue";
 
@@ -69,6 +69,7 @@ export async function uploadDocument(
       id: documentId,
       tenantId,
       profileId,
+      profileIds: [profileId],
       name,
       fileName: file.originalname,
       fileUrl,
@@ -258,4 +259,41 @@ export async function reindexDocument(tenantId: string | null, id: string) {
   );
 
   return doc;
+}
+
+export async function updateProfileAssignment(
+  tenantId: string | null,
+  documentId: string,
+  profileIds: string[]
+) {
+  const doc = await getDocumentById(tenantId, documentId);
+  if (!doc) return null;
+
+  // Verify all profiles belong to the same tenant
+  if (profileIds.length > 0) {
+    const profiles = await db
+      .select({ id: positionProfiles.id })
+      .from(positionProfiles)
+      .where(
+        and(
+          eq(positionProfiles.tenantId, doc.tenantId),
+          inArray(positionProfiles.id, profileIds)
+        )
+      );
+    if (profiles.length !== profileIds.length) return null;
+  }
+
+  const primaryId = profileIds[0] ?? doc.profileId ?? "";
+
+  const [updated] = await db
+    .update(documents)
+    .set({
+      profileIds,
+      profileId: primaryId as string,
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.id, documentId))
+    .returning();
+
+  return updated ?? null;
 }

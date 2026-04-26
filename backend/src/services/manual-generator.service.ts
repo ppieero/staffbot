@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { indexManual } from "./manual-indexer.service.js";
 import { db } from "../db/index.js";
 import { manuals, manualSections } from "../db/schema.js";
 import { eq } from "drizzle-orm";
@@ -97,6 +98,13 @@ async function saveSections(manualId: string, generated: GeneratedManual): Promi
   }).where(eq(manuals.id, manualId));
 
   console.log(`[manual] Generated ${generated.sections.length} sections for ${manualId}`);
+
+  try {
+    const { chunks } = await indexManual(manualId);
+    console.log(`[manual] RAG indexed ${chunks} sections for ${manualId}`);
+  } catch (err: any) {
+    console.warn("[manual] RAG indexing failed (manual still published):", err?.message);
+  }
 }
 
 export async function generateManualFromDocument(

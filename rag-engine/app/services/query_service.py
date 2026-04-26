@@ -2,7 +2,7 @@ import time
 from typing import Optional
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
 import anthropic
 
 from app.config import get_settings
@@ -29,7 +29,8 @@ class RAGQueryService:
         self,
         tenant_id: str,
         profile_id: str,
-        question: str,
+        profile_ids: Optional[list] = None,
+        question: str = "",
         conversation_history: Optional[list] = None,
         system_prompt: Optional[str] = None,
         embed_provider: EmbedProvider = "openai",
@@ -44,14 +45,19 @@ class RAGQueryService:
         q_vector = embed([question], embed_provider)[0]
 
         # 2. Search Qdrant (collection is provider-specific)
+        # Build the effective profile id list: prefer the explicit list, fallback to single id
+        effective_ids = list(dict.fromkeys(filter(None, (profile_ids or []) + [profile_id])))
         try:
             results = self.qdrant.search(
                 collection_name=col,
                 query_vector=q_vector,
                 query_filter=Filter(
                     must=[
-                        FieldCondition(key="tenant_id",  match=MatchValue(value=tenant_id)),
-                        FieldCondition(key="profile_id", match=MatchValue(value=profile_id)),
+                        FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                    ],
+                    should=[
+                        FieldCondition(key="profile_id",  match=MatchAny(any=effective_ids)),
+                        FieldCondition(key="profile_ids", match=MatchAny(any=effective_ids)),
                     ]
                 ),
                 limit=TOP_K,
@@ -62,10 +68,14 @@ class RAGQueryService:
             results = []
 
         # 3. Build context block
-        context_parts = [
-            f"[Source {i + 1} — doc:{r.payload['document_id']} chunk:{r.payload['chunk_index']}]\n{r.payload['text']}"
-            for i, r in enumerate(results)
-        ]
+        context_parts = []
+        for i, r in enumerate(results):
+            src_type = r.payload.get("source_type", "document")
+            if src_type == "manual_section":
+                label = f"[Source {i+1} — manual:{r.payload.get('manual_title','?')} section:{r.payload.get('section_title','?')}]"
+            else:
+                label = f"[Source {i+1} — doc:{r.payload.get('document_id','?')} chunk:{r.payload.get('chunk_index','?')}]"
+            context_parts.append(f"{label}\n{r.payload.get('text', '')}")
         context = "\n\n---\n\n".join(context_parts) if context_parts else "(No relevant documents found)"
 
         # 4. Build message list (last N turns + current question)
@@ -122,12 +132,22 @@ class RAGQueryService:
                         all_images.append(img)
                 all_videos.update(r.payload.get("video_urls", []))
 
+            source_type = r.payload.get("source_type", "document")
             sources.append({
-                "document_id":    r.payload["document_id"],
-                "chunk_index":    r.payload["chunk_index"],
+                "source_type":    source_type,
+                "document_id":    r.payload.get("document_id"),
+                "manual_id":      r.payload.get("manual_id"),
+                "section_id":     r.payload.get("section_id"),
+                "section_title":  r.payload.get("section_title"),
+                "section_index":  r.payload.get("section_index"),
+                "total_sections": r.payload.get("total_sections"),
+                "manual_title":   r.payload.get("manual_title"),
+                "manual_slug":    r.payload.get("manual_slug"),
+                "tenant_slug":    r.payload.get("tenant_slug"),
+                "chunk_index":    r.payload.get("chunk_index"),
                 "embed_provider": embed_provider,
                 "score":          round(r.score, 4),
-                "excerpt":        r.payload["text_preview"],
+                "excerpt":        r.payload.get("text_preview"),
             })
 
         return {

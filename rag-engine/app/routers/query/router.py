@@ -15,6 +15,7 @@ class ConversationMessage(BaseModel):
 class QueryRequest(BaseModel):
     tenant_id: str
     profile_id: str
+    profile_ids: list = []
     question: str
     conversation_history: Optional[list[ConversationMessage]] = None
     system_prompt: Optional[str] = None
@@ -38,6 +39,7 @@ async def query_rag(req: QueryRequest):
         result = await svc.query(
             tenant_id=req.tenant_id,
             profile_id=req.profile_id,
+            profile_ids=req.profile_ids,
             question=req.question,
             conversation_history=history,
             system_prompt=req.system_prompt,

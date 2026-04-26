@@ -258,6 +258,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
       body: JSON.stringify({
         tenant_id:            tenant.id,
         profile_id:           profile.id,
+        profile_ids:          assignedProfiles.map(p => p.id),
         question:             text,
         system_prompt:        (profile.systemPrompt ? profile.systemPrompt + "\n\n" : "") + langInstruction(lang),
         conversation_history: history,
@@ -303,6 +304,20 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
 
   // ── 12. Send reply ────────────────────────────────────────────────────────
   await sendMessage(chatId, answer);
+
+  // Append manual section link if the answer came from a manual
+  const manualSrc = (sources as any[]).find(
+    (s: any) => s.source_type === "manual_section" && s.manual_slug && s.tenant_slug
+  );
+  if (manualSrc) {
+    const sIdx      = manualSrc.section_index ?? 0;
+    const total     = manualSrc.total_sections;
+    const secLabel  = total
+      ? ` — Section ${sIdx + 1} of ${total}: ${manualSrc.section_title ?? ""}`
+      : manualSrc.section_title ? ` — ${manualSrc.section_title}` : "";
+    const manualUrl = `https://staffbot.trainly.me/m/${manualSrc.tenant_slug}/${manualSrc.manual_slug}?s=${sIdx}`;
+    await sendMessage(chatId, `📖 *${manualSrc.manual_title ?? "Manual"}*${secLabel}\n${manualUrl}`).catch(() => {});
+  }
 
   // Send images from document (up to 2).
   // Add 2s gap between each to avoid Telegram flood-wait errors.

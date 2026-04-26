@@ -20,6 +20,7 @@ interface Doc {
   errorMessage: string | null;
   createdAt: string;
   profileId: string;
+  profileIds: string[];
 }
 
 interface Profile {
@@ -182,6 +183,19 @@ export default function DocumentsPage() {
       showToast("Reindex queued", "ok");
     } catch {
       showToast("Reindex failed");
+    }
+  }, [qc, showToast]);
+
+  // ── Profile assignment ─────────────────────────────────────────────────────
+
+  const assignProfiles = useCallback(async (docId: string, profileIds: string[]) => {
+    try {
+      await api.patch(`/documents/${docId}/profile-assignment`, { profileIds });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      showToast("Profile assignment updated", "ok");
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Update failed";
+      showToast(msg);
     }
   }, [qc, showToast]);
 
@@ -385,6 +399,40 @@ export default function DocumentsPage() {
                                 <p style={{ fontSize: "0.75rem", color: "#f87171", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {doc.errorMessage}
                                 </p>
+                              )}
+                              {/* Profile access chips — only show when there are multiple profiles */}
+                              {profiles.length > 1 && (
+                                <div style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap", marginTop: "0.375rem" }}>
+                                  {profiles.map((p) => {
+                                    const docProfileIds = doc.profileIds?.length ? doc.profileIds : [doc.profileId];
+                                    const assigned = docProfileIds.includes(p.id);
+                                    return (
+                                      <button
+                                        key={p.id}
+                                        onClick={() => {
+                                          const current = doc.profileIds?.length ? doc.profileIds : [doc.profileId];
+                                          const next = assigned
+                                            ? current.filter((id) => id !== p.id)
+                                            : [...current, p.id];
+                                          if (next.length === 0) { showToast("At least one profile is required"); return; }
+                                          assignProfiles(doc.id, next);
+                                        }}
+                                        style={{
+                                          display: "inline-flex", alignItems: "center", gap: 3,
+                                          fontSize: "0.625rem", padding: "1px 7px", borderRadius: 99,
+                                          border: `1px solid ${assigned ? "rgba(99,102,241,0.45)" : "var(--border)"}`,
+                                          background: assigned ? "rgba(99,102,241,0.12)" : "transparent",
+                                          color: assigned ? "var(--accent)" : "var(--text-muted)",
+                                          cursor: "pointer", fontWeight: assigned ? 700 : 400,
+                                          transition: "all 0.15s",
+                                        }}
+                                      >
+                                        {assigned && <span style={{ fontSize: 7, lineHeight: 1 }}>✓</span>}
+                                        {p.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               )}
                             </div>
 

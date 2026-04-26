@@ -1,10 +1,11 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { db } from "../db/index.js";
-import { manuals, manualSections, tenants } from "../db/schema.js";
-import { eq, and, desc } from "drizzle-orm";
+import { manuals, manualSections, tenants, positionProfiles } from "../db/schema.js";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { authenticate } from "../middleware/auth.js";
 import { generateManual, generateManualFromVideo } from "../services/manual-generator.service.js";
+import { indexManual, deindexManual } from "../services/manual-indexer.service.js";
 import { transcribeVideo } from "../services/video-transcription.service.js";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
@@ -68,6 +69,8 @@ router.get("/", authenticate, async (req: Request, res: Response) => {
         videoUrl:       manuals.videoUrl,
         videoDuration:  manuals.videoDuration,
         profileIds:     manuals.profileIds,
+        ragIndexed:     manuals.ragIndexed,
+        ragChunks:      manuals.ragChunks,
         generatedAt:    manuals.generatedAt,
         createdAt:      manuals.createdAt,
         updatedAt:      manuals.updatedAt,
@@ -334,6 +337,81 @@ router.delete("/:id", authenticate, async (req: Request, res: Response) => {
 
     await db.delete(manuals).where(eq(manuals.id, req.params.id));
     res.json({ deleted: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/manuals/:id/profile-assignment
+router.patch("/:id/profile-assignment", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { profileIds } = req.body;
+
+    if (!Array.isArray(profileIds) || profileIds.length === 0)
+      return res.status(400).json({ error: "profileIds must be a non-empty array" });
+
+    const [manual] = await db.select().from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const profiles = await db
+      .select({ id: positionProfiles.id })
+      .from(positionProfiles)
+      .where(and(
+        eq(positionProfiles.tenantId, manual.tenantId),
+        inArray(positionProfiles.id, profileIds),
+      ));
+
+    if (profiles.length !== profileIds.length)
+      return res.status(400).json({ error: "One or more profiles do not belong to this company" });
+
+    await db.update(manuals)
+      .set({ profileIds, updatedAt: new Date() })
+      .where(eq(manuals.id, req.params.id));
+
+    if (manual.ragIndexed) {
+      indexManual(req.params.id).catch((e: any) =>
+        console.warn("[manual] re-index after profile change failed:", e?.message)
+      );
+    }
+
+    res.json({ id: req.params.id, profileIds });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/manuals/:id/index
+router.post("/:id/index", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const [manual] = await db.select().from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+    if (manual.status !== "published")
+      return res.status(400).json({ error: "Manual must be published before indexing" });
+
+    const { chunks } = await indexManual(manual.id);
+    res.json({ success: true, chunks });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/manuals/:id/index
+router.delete("/:id/index", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const [manual] = await db.select().from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    await deindexManual(manual.id);
+    res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -107,8 +107,9 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
   }
 
   // 5. Get profiles — if message from group, use group-specific profile
-  let systemPrompt = "";
-  let profileId    = "default";
+  let systemPrompt  = "";
+  let profileId     = "default";
+  let allProfileIds: string[] = [];
 
   if (params.groupJid) {
     // Find profile by group JID
@@ -118,7 +119,8 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
       .where(eq(employeeProfiles.waGroupJid, params.groupJid))
       .limit(1);
     if (epRow) {
-      profileId = epRow.profileId;
+      profileId     = epRow.profileId;
+      allProfileIds = [profileId];
       const [prof] = await db
         .select({ systemPrompt: positionProfiles.systemPrompt })
         .from(positionProfiles)
@@ -133,9 +135,10 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
       .from(employeeProfiles)
       .innerJoin(positionProfiles, eq(employeeProfiles.profileId, positionProfiles.id))
       .where(eq(employeeProfiles.employeeId, employee.id));
+    allProfileIds = assigned.map(p => p.profileId);
     const primary = assigned.find(p => p.isPrimary) ?? assigned[0];
     if (primary) { profileId = primary.profileId; systemPrompt = primary.systemPrompt ?? ""; }
-    else if (employee.profileId) profileId = employee.profileId;
+    else if (employee.profileId) { profileId = employee.profileId; allProfileIds = [profileId]; }
   }
 
   // 6. Get/create conversation
@@ -182,7 +185,9 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
     const ragRes = await fetch(`${RAG_URL}/query`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tenant_id: tenant.id, profile_id: profileId,
+        tenant_id: tenant.id,
+        profile_id: profileId,
+        profile_ids: allProfileIds,
         question: text,
         system_prompt: (systemPrompt ? systemPrompt + "\n\n" : "") +
           "IMPORTANT: You are responding via WhatsApp messaging. Keep responses concise and conversational. Maximum 3-4 paragraphs.\n\n" +
@@ -233,6 +238,20 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
   // Send to group or personal chat
   const replyTo = params.groupJid ?? params.from;
   await sendText(replyTo, answer);
+
+  // Append manual section link if the answer came from a manual
+  const manualSrc = ((ragMeta.sources as any[]) ?? []).find(
+    (s: any) => s.source_type === "manual_section" && s.manual_slug && s.tenant_slug
+  );
+  if (manualSrc) {
+    const sIdx      = manualSrc.section_index ?? 0;
+    const total     = manualSrc.total_sections;
+    const secLabel  = total
+      ? ` — Section ${sIdx + 1} of ${total}: ${manualSrc.section_title ?? ""}`
+      : manualSrc.section_title ? ` — ${manualSrc.section_title}` : "";
+    const manualUrl = `https://staffbot.trainly.me/m/${manualSrc.tenant_slug}/${manualSrc.manual_slug}?s=${sIdx}`;
+    await sendText(replyTo, `📖 *${manualSrc.manual_title ?? "Manual"}*${secLabel}\n${manualUrl}`).catch(() => {});
+  }
 
   // Send images from document (up to 2).
   // WaSender account-protection enforces 1 msg/5s — wait 6s before each image.
