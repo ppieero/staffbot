@@ -8,6 +8,13 @@
       "when": 1773343073016,
       "tag": "0000_safe_silvermane",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777164880837,
+      "tag": "0001_jazzy_vindicator",
+      "breakpoints": true
     }
   ]
 }

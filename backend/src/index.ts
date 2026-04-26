@@ -12,6 +12,7 @@ import documentRoutes from "./routes/document.routes";
 import conversationRoutes from "./routes/conversation.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import userRoutes from "./routes/user.routes";
+import manualRoutes from "./routes/manual.routes";
 import tokensRoutes from "./routes/tokens.routes";
 import webhookRoutes from "./routes/webhook.routes";
 
@@ -35,6 +36,7 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/conversations", conversationRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/manuals", manualRoutes);
 app.use("/api/tokens", tokensRoutes);
 
 // Webhooks — no auth middleware, Meta verifies via WHATSAPP_VERIFY_TOKEN

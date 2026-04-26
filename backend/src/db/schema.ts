@@ -360,3 +360,29 @@ export const pricingConfig = pgTable("pricing_config", {
   marginPct:        doublePrecision("margin_pct").notNull().default(30.0),
   updatedAt:        timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const manuals = pgTable("manuals", {
+  id:             uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:       uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  title:          varchar("title", { length: 255 }).notNull(),
+  slug:           varchar("slug", { length: 255 }).notNull(),
+  status:         varchar("status", { length: 32 }).notNull().default("draft"),
+  language:       varchar("language", { length: 8 }).default("es"),
+  sourceFileUrl:  text("source_file_url"),
+  sourceFileName: varchar("source_file_name", { length: 255 }),
+  profileIds:     text("profile_ids").array().default([]),
+  generatedAt:    timestamp("generated_at", { withTimezone: true }),
+  createdAt:      timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:      timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const manualSections = pgTable("manual_sections", {
+  id:          uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  manualId:    uuid("manual_id").notNull().references(() => manuals.id, { onDelete: "cascade" }),
+  orderIndex:  integer("order_index").notNull().default(0),
+  title:       varchar("title", { length: 255 }).notNull(),
+  contentHtml: text("content_html").notNull().default(""),
+  sectionType: varchar("section_type", { length: 32 }).default("content"),
+  images:      jsonb("images").default([]),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
