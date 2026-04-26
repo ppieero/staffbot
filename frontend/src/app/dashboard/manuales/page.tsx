@@ -70,7 +70,8 @@ export default function ManualesPage() {
   const [toast, setToast]           = useState<{ msg: string; ok?: boolean } | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [uploadType, setUploadType] = useState<"doc" | "video">("doc");
-  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadTitle, setUploadTitle]       = useState("");
+  const [uploadLanguage, setUploadLanguage] = useState("auto");
 
   const showToast = (msg: string, ok = false) => {
     setToast({ msg, ok });
@@ -96,10 +97,12 @@ export default function ManualesPage() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("title", uploadTitle.trim() || file.name.replace(/\.[^/.]+$/, ""));
+      fd.append("language", uploadLanguage);
       await api.post("/manuals/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
       qc.invalidateQueries({ queryKey: ["manuals"] });
       setShowUpload(false);
       setUploadTitle("");
+      setUploadLanguage("auto");
       if (fileInputRef.current) fileInputRef.current.value = "";
       showToast("Document uploaded — manual generation started (1-2 min)", true);
     } catch (e: unknown) {
@@ -119,6 +122,7 @@ export default function ManualesPage() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("title", uploadTitle.trim() || file.name.replace(/\.[^/.]+$/, ""));
+      fd.append("language", uploadLanguage);
       await api.post("/manuals/upload-video", fd, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 120000,
@@ -126,6 +130,7 @@ export default function ManualesPage() {
       qc.invalidateQueries({ queryKey: ["manuals"] });
       setShowUpload(false);
       setUploadTitle("");
+      setUploadLanguage("auto");
       if (videoInputRef.current) videoInputRef.current.value = "";
       showToast("Video uploaded — transcription started (2-3 min)", true);
     } catch (e: unknown) {
@@ -355,6 +360,43 @@ export default function ManualesPage() {
                   style={{ width: "100%", padding: "0.5rem 0.75rem", background: "var(--bg-main)", border: "1px solid var(--border)", borderRadius: 7, color: "var(--text-primary)", fontSize: "0.875rem", outline: "none", boxSizing: "border-box" }}
                 />
               </div>
+              {/* Language selector */}
+              <div>
+                <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 6 }}>
+                  Output language
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                  {([
+                    { value: "auto", label: "🔍 Auto-detect" },
+                    { value: "en",   label: "🇬🇧 English" },
+                    { value: "es",   label: "🇪🇸 Spanish" },
+                    { value: "fr",   label: "🇫🇷 French" },
+                    { value: "pt",   label: "🇵🇹 Portuguese" },
+                    { value: "de",   label: "🇩🇪 German" },
+                  ] as const).map(lang => (
+                    <div
+                      key={lang.value}
+                      onClick={() => setUploadLanguage(lang.value)}
+                      style={{
+                        padding: "0.5rem 0.75rem", borderRadius: 8, cursor: "pointer",
+                        border: `1.5px solid ${uploadLanguage === lang.value ? "var(--accent)" : "var(--border)"}`,
+                        background: uploadLanguage === lang.value ? "rgba(99,102,241,0.08)" : "transparent",
+                        fontSize: "0.8125rem", fontWeight: uploadLanguage === lang.value ? 600 : 400,
+                        color: uploadLanguage === lang.value ? "var(--accent)" : "var(--text-secondary)",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {lang.label}
+                    </div>
+                  ))}
+                </div>
+                {uploadLanguage !== "auto" && (
+                  <p style={{ fontSize: "0.6875rem", color: "var(--text-muted)", marginTop: 5 }}>
+                    Claude will generate the entire manual in the selected language, translating the source if needed.
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   {uploadType === "video"
@@ -387,7 +429,7 @@ export default function ManualesPage() {
               <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
                 <button
                   type="button"
-                  onClick={() => { setShowUpload(false); setUploadTitle(""); }}
+                  onClick={() => { setShowUpload(false); setUploadTitle(""); setUploadLanguage("auto"); }}
                   style={{ padding: "0.5rem 1rem", background: "transparent", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: "0.875rem", cursor: "pointer" }}
                 >
                   Cancel

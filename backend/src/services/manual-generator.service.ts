@@ -5,7 +5,11 @@ import { manuals, manualSections } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import type { TranscriptionResult } from "./video-transcription.service.js";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+let _client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _client;
+}
 
 interface ManualSection {
   title:       string;
@@ -54,7 +58,7 @@ function buildSectionHtml(section: ManualSection): string {
 }
 
 async function callClaude(prompt: string, systemPrompt: string): Promise<GeneratedManual> {
-  const response = await client.messages.create({
+  const response = await getClient().messages.create({
     model:      "claude-sonnet-4-6",
     max_tokens: 8000,
     system:     systemPrompt,
@@ -108,13 +112,19 @@ async function saveSections(manualId: string, generated: GeneratedManual): Promi
 }
 
 export async function generateManualFromDocument(
-  manualId:    string,
-  pdfText:     string,
-  sourceTitle: string,
+  manualId:       string,
+  pdfText:        string,
+  sourceTitle:    string,
+  targetLanguage: string = "auto",
 ): Promise<void> {
   await db.update(manuals)
     .set({ status: "generating", updatedAt: new Date() })
     .where(eq(manuals.id, manualId));
+
+  const LANG_NAMES: Record<string, string> = { es: "Spanish", en: "English", fr: "French", pt: "Portuguese", de: "German" };
+  const langInstruction = targetLanguage !== "auto" && LANG_NAMES[targetLanguage]
+    ? `IMPORTANT: Generate ALL content in ${LANG_NAMES[targetLanguage]}. Translate from the source if needed. The "language" field must be "${targetLanguage}".`
+    : `Detect the language from the document content and use it throughout. Set "language" to the detected ISO code.`;
 
   try {
     const systemPrompt = `You are a professional technical writer specializing in operational manuals.
@@ -126,6 +136,8 @@ Respond ONLY with valid JSON, no markdown, no preamble.`;
 DOCUMENT TITLE: ${sourceTitle}
 DOCUMENT CONTENT:
 ${pdfText.slice(0, 60000)}
+
+${langInstruction}
 
 Return JSON with this exact structure:
 {
@@ -156,14 +168,21 @@ Create 6-12 sections covering ALL topics. First section = intro, last = summary/
 }
 
 export async function generateManualFromVideo(
-  manualId:      string,
-  transcription: TranscriptionResult,
-  sourceTitle:   string,
-  videoDuration: number,
+  manualId:       string,
+  transcription:  TranscriptionResult,
+  sourceTitle:    string,
+  videoDuration:  number,
+  targetLanguage: string = "auto",
 ): Promise<void> {
   await db.update(manuals)
     .set({ status: "generating", updatedAt: new Date() })
     .where(eq(manuals.id, manualId));
+
+  const LANG_NAMES: Record<string, string> = { es: "Spanish", en: "English", fr: "French", pt: "Portuguese", de: "German" };
+  const effectiveLang = targetLanguage !== "auto" ? targetLanguage : (transcription.language ?? "auto");
+  const langInstruction = LANG_NAMES[effectiveLang]
+    ? `IMPORTANT: Generate ALL content in ${LANG_NAMES[effectiveLang]}. The "language" field must be "${effectiveLang}".`
+    : `Use the detected transcription language throughout.`;
 
   try {
     const systemPrompt = `You are a senior industrial engineer specialized in operational procedures and SOPs.
@@ -184,6 +203,8 @@ FULL TEXT: ${transcription.text}
 
 TRANSCRIPTION WITH TIMESTAMPS:
 ${segmentsText.slice(0, 50000)}
+
+${langInstruction}
 
 Return JSON with this exact structure:
 {

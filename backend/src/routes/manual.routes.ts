@@ -158,10 +158,11 @@ router.post(
         : req.body.tenantId;
       if (!tenantId) return res.status(400).json({ error: "tenantId required" });
 
-      const title      = (req.body.title as string | undefined)?.trim()
+      const title          = (req.body.title as string | undefined)?.trim()
         || req.file.originalname.replace(/\.[^/.]+$/, "");
-      const baseSlug   = slugify(title);
-      const profileIds = req.body.profileIds ? JSON.parse(req.body.profileIds) : [];
+      const targetLanguage = (req.body.language as string | undefined) ?? "auto";
+      const baseSlug       = slugify(title);
+      const profileIds     = req.body.profileIds ? JSON.parse(req.body.profileIds) : [];
 
       // Upload source file to MinIO (best-effort)
       const fileUrl = await uploadToMinio(
@@ -178,6 +179,7 @@ router.post(
         title,
         slug:           `${baseSlug}-${Date.now()}`,
         status:         "pending",
+        language:       targetLanguage === "auto" ? null : targetLanguage,
         sourceFileUrl:  fileUrl,
         sourceFileName: req.file.originalname,
         profileIds,
@@ -190,13 +192,11 @@ router.post(
 
       setImmediate(async () => {
         try {
-          // Try RAG engine for text extraction
-          const { default: FormData } = await import("form-data");
+          console.log(`[manual] Extracting text from "${fileOrigname}" (${fileMimetype})`);
+
+          // Use native FormData + Blob — works correctly with Node 18+ native fetch
           const form = new FormData();
-          form.append("file", fileBuffer, {
-            filename:    fileOrigname,
-            contentType: fileMimetype,
-          });
+          form.append("file", new Blob([fileBuffer], { type: fileMimetype }), fileOrigname);
           form.append("tenant_id",   tenantId);
           form.append("document_id", manual.id);
 
@@ -204,21 +204,27 @@ router.post(
           try {
             const ragRes = await fetch(
               `${process.env.RAG_ENGINE_URL ?? "http://localhost:8000"}/extract-text`,
-              { method: "POST", body: form as any, headers: form.getHeaders() },
+              { method: "POST", body: form },
             );
             if (ragRes.ok) {
-              const data = await ragRes.json() as { text?: string };
+              const data = await ragRes.json() as { text?: string; error?: string };
               pdfText = data.text ?? "";
+              if (data.error) console.warn("[manual] RAG extract warning:", data.error);
+              console.log(`[manual] Extracted ${pdfText.length} chars from ${fileOrigname}`);
+            } else {
+              const errBody = await ragRes.text().catch(() => "");
+              console.warn(`[manual] RAG extract-text ${ragRes.status}: ${errBody.slice(0, 200)}`);
             }
           } catch (e: any) {
             console.warn("[manual] RAG extract-text failed:", e?.message);
           }
 
-          if (!pdfText) {
-            pdfText = `Document: ${fileOrigname}\nPlease create a comprehensive manual based on the document title and typical content for this type of document.`;
+          if (!pdfText || pdfText.trim().length < 30) {
+            console.warn("[manual] Falling back to title-only prompt for", fileOrigname);
+            pdfText = `Document title: ${title}\nFile: ${fileOrigname}\n\nCreate a comprehensive professional manual based on the document title and context.`;
           }
 
-          await generateManual(manual.id, pdfText, title);
+          await generateManual(manual.id, pdfText, title, targetLanguage);
         } catch (err: any) {
           console.error("[manual] async generation error:", err?.message);
         }
@@ -261,8 +267,9 @@ router.post(
         });
       }
 
-      const title    = ((req.body.title as string | undefined)?.trim()) || req.file.originalname.replace(/\.[^/.]+$/, "");
-      const baseSlug = slugify(title);
+      const title          = ((req.body.title as string | undefined)?.trim()) || req.file.originalname.replace(/\.[^/.]+$/, "");
+      const targetLanguage = (req.body.language as string | undefined) ?? "auto";
+      const baseSlug       = slugify(title);
 
       // Upload video to MinIO (best-effort)
       const videoUrl = await uploadToMinio(req.file.buffer, req.file.originalname, tenantId).catch((e: any) => {
@@ -299,7 +306,7 @@ router.post(
             updatedAt:      new Date(),
           }).where(eq(manuals.id, manual.id));
 
-          await generateManualFromVideo(manual.id, transcription, title, transcription.duration);
+          await generateManualFromVideo(manual.id, transcription, title, transcription.duration, targetLanguage);
           console.log(`[manual-video] Manual generated for ${manual.id}`);
         } catch (err: any) {
           console.error("[manual-video] error:", err?.message);
