@@ -2,14 +2,20 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db/index.js";
 import { manuals, manualSections } from "../db/schema.js";
 import { eq } from "drizzle-orm";
+import type { TranscriptionResult } from "./video-transcription.service.js";
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 interface ManualSection {
-  title:      string;
-  type:       "intro" | "steps" | "note" | "checklist" | "content";
-  content:    string;
-  steps?:     string[];
-  notes?:     string[];
-  checklist?: string[];
+  title:       string;
+  type:        "intro" | "steps" | "note" | "checklist" | "content" | "warning";
+  content:     string;
+  steps?:      string[];
+  notes?:      string[];
+  checklist?:  string[];
+  warning?:    string;
+  clip_start?: number;
+  clip_end?:   number;
 }
 
 interface GeneratedManual {
@@ -21,6 +27,10 @@ interface GeneratedManual {
 function buildSectionHtml(section: ManualSection): string {
   let html = `<p class="sb-section-body">${section.content}</p>`;
 
+  if (section.warning) {
+    html = `<div class="sb-warning"><span class="sb-warning-icon">⚠</span><div><strong>Advertencia de seguridad</strong><p>${section.warning}</p></div></div>` + html;
+  }
+
   if (section.steps?.length) {
     html += `<ol class="sb-steps">${section.steps.map(s =>
       `<li class="sb-step">${s}</li>`
@@ -29,108 +39,177 @@ function buildSectionHtml(section: ManualSection): string {
 
   if (section.checklist?.length) {
     html += `<ul class="sb-checklist">${section.checklist.map(s =>
-      `<li class="sb-check"><span class="sb-check-box"></span>${s}</li>`
+      `<li class="sb-check"><span class="sb-check-box"></span><span>${s}</span></li>`
     ).join("")}</ul>`;
   }
 
   if (section.notes?.length) {
     html += section.notes.map(n =>
-      `<div class="sb-note"><span class="sb-note-label">Nota</span>${n}</div>`
+      `<div class="sb-note"><span class="sb-note-label">Nota</span><p>${n}</p></div>`
     ).join("");
   }
 
   return html;
 }
 
-export async function generateManual(
+async function callClaude(prompt: string, systemPrompt: string): Promise<GeneratedManual> {
+  const response = await client.messages.create({
+    model:      "claude-sonnet-4-6",
+    max_tokens: 8000,
+    system:     systemPrompt,
+    messages:   [{ role: "user", content: prompt }],
+  });
+
+  const rawText = response.content
+    .filter(b => b.type === "text")
+    .map(b => (b as { type: "text"; text: string }).text)
+    .join("");
+
+  const cleaned = rawText.replace(/^```json?\s*/i, "").replace(/\s*```$/i, "").trim();
+  return JSON.parse(cleaned);
+}
+
+async function saveSections(manualId: string, generated: GeneratedManual): Promise<void> {
+  await db.delete(manualSections).where(eq(manualSections.manualId, manualId));
+
+  for (let i = 0; i < generated.sections.length; i++) {
+    const s = generated.sections[i];
+    const clipMeta = s.clip_start !== undefined
+      ? [{ clip_start: s.clip_start, clip_end: s.clip_end }]
+      : [];
+
+    await db.insert(manualSections).values({
+      manualId:    manualId,
+      orderIndex:  i,
+      title:       s.title,
+      contentHtml: buildSectionHtml(s),
+      sectionType: s.type ?? "content",
+      images:      clipMeta,
+    });
+  }
+
+  await db.update(manuals).set({
+    status:      "published",
+    title:       generated.title,
+    language:    generated.language ?? "es",
+    generatedAt: new Date(),
+    updatedAt:   new Date(),
+  }).where(eq(manuals.id, manualId));
+
+  console.log(`[manual] Generated ${generated.sections.length} sections for ${manualId}`);
+}
+
+export async function generateManualFromDocument(
   manualId:    string,
   pdfText:     string,
   sourceTitle: string,
 ): Promise<void> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   await db.update(manuals)
     .set({ status: "generating", updatedAt: new Date() })
     .where(eq(manuals.id, manualId));
 
   try {
-    const prompt = `You are a professional technical writer. Analyze the following document and create a well-structured web manual in JSON format.
+    const systemPrompt = `You are a professional technical writer specializing in operational manuals.
+Create well-structured web manuals that cover ALL topics in the source document.
+Respond ONLY with valid JSON, no markdown, no preamble.`;
+
+    const prompt = `Analyze the following document and create a comprehensive web manual in JSON format.
 
 DOCUMENT TITLE: ${sourceTitle}
 DOCUMENT CONTENT:
 ${pdfText.slice(0, 60000)}
 
-Create a comprehensive, well-organized manual with the following JSON structure:
+Return JSON with this exact structure:
 {
-  "title": "Manual title (concise, professional)",
-  "language": "es|en|fr|pt (detected from content)",
+  "title": "Manual title",
+  "language": "es|en|fr|pt",
   "sections": [
     {
       "title": "Section title",
-      "type": "intro|steps|checklist|note|content",
-      "content": "Main paragraph text for this section. Be detailed and clear.",
-      "steps": ["Step 1 description", "Step 2 description"],
-      "checklist": ["Item to check 1", "Item to check 2"],
-      "notes": ["Important note or warning"]
+      "type": "intro|steps|checklist|note|warning|content",
+      "content": "Main paragraph describing this section",
+      "steps": ["Step 1", "Step 2"],
+      "checklist": ["Check item 1"],
+      "notes": ["Important note"],
+      "warning": "Critical safety warning if applicable"
     }
   ]
 }
 
-RULES:
-- Create 6-12 sections minimum, covering ALL topics in the document
-- First section must be type "intro" — welcome/overview
-- Last section must be contacts or summary
-- type "steps" = numbered process with steps array
-- type "checklist" = items to verify/complete with checklist array
-- type "note" = important warnings or reminders
-- type "content" = regular informational text
-- Write content in the SAME LANGUAGE as the document
-- Be thorough — employees will use this as their primary reference
-- Respond with ONLY the JSON object, no markdown, no preamble`;
+Create 6-12 sections covering ALL topics. First section = intro, last = summary/contacts.`;
 
-    const response = await client.messages.create({
-      model:      "claude-sonnet-4-6",
-      max_tokens: 8000,
-      messages:   [{ role: "user", content: prompt }],
-    });
-
-    const rawText = response.content
-      .filter(b => b.type === "text")
-      .map(b => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const cleaned  = rawText.replace(/^```json?\s*/i, "").replace(/\s*```$/i, "").trim();
-    const generated: GeneratedManual = JSON.parse(cleaned);
-
-    await db.delete(manualSections).where(eq(manualSections.manualId, manualId));
-
-    for (let i = 0; i < generated.sections.length; i++) {
-      const s = generated.sections[i];
-      await db.insert(manualSections).values({
-        manualId:    manualId,
-        orderIndex:  i,
-        title:       s.title,
-        contentHtml: buildSectionHtml(s),
-        sectionType: s.type ?? "content",
-        images:      [],
-      });
-    }
-
-    await db.update(manuals).set({
-      status:      "published",
-      title:       generated.title ?? sourceTitle,
-      language:    generated.language ?? "es",
-      generatedAt: new Date(),
-      updatedAt:   new Date(),
-    }).where(eq(manuals.id, manualId));
-
-    console.log(`[manual] Generated ${generated.sections.length} sections for ${manualId}`);
+    const generated = await callClaude(prompt, systemPrompt);
+    await saveSections(manualId, generated);
   } catch (err: any) {
-    console.error("[manual] generation error:", err?.message);
-    await db.update(manuals).set({
-      status:    "error",
-      updatedAt: new Date(),
-    }).where(eq(manuals.id, manualId));
+    console.error("[manual] document generation error:", err?.message);
+    await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));
     throw err;
   }
 }
+
+export async function generateManualFromVideo(
+  manualId:      string,
+  transcription: TranscriptionResult,
+  sourceTitle:   string,
+  videoDuration: number,
+): Promise<void> {
+  await db.update(manuals)
+    .set({ status: "generating", updatedAt: new Date() })
+    .where(eq(manuals.id, manualId));
+
+  try {
+    const systemPrompt = `You are a senior industrial engineer specialized in operational procedures and SOPs.
+Convert video transcriptions into structured, executable SOP manuals.
+Only include steps clearly evidenced in the transcription.
+Respond ONLY with valid JSON, no markdown, no preamble.`;
+
+    const segmentsText = transcription.segments?.map(s =>
+      `[${Math.round(s.start)}s-${Math.round(s.end)}s] ${s.text}`
+    ).join("\n") ?? transcription.text;
+
+    const prompt = `Convert the following video transcription into an executable SOP manual.
+
+VIDEO TITLE: ${sourceTitle}
+VIDEO DURATION: ${Math.round(videoDuration)}s
+DETECTED LANGUAGE: ${transcription.language}
+FULL TEXT: ${transcription.text}
+
+TRANSCRIPTION WITH TIMESTAMPS:
+${segmentsText.slice(0, 50000)}
+
+Return JSON with this exact structure:
+{
+  "title": "SOP title based on video content",
+  "language": "${transcription.language}",
+  "sections": [
+    {
+      "title": "Section title",
+      "type": "intro|steps|checklist|note|warning|content",
+      "content": "Description of what happens in this part",
+      "steps": ["Step 1 (actionable)", "Step 2"],
+      "checklist": ["Required item to verify"],
+      "notes": ["Tip from video"],
+      "warning": "Safety warning if mentioned",
+      "clip_start": 0,
+      "clip_end": 45
+    }
+  ]
+}
+
+IMPORTANT:
+- clip_start and clip_end are seconds from video start for that section
+- Only include steps clearly evidenced in the transcription
+- Mark unclear steps with [VERIFY] prefix
+- Create 5-10 sections covering the full procedure`;
+
+    const generated = await callClaude(prompt, systemPrompt);
+    await saveSections(manualId, generated);
+  } catch (err: any) {
+    console.error("[manual] video generation error:", err?.message);
+    await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));
+    throw err;
+  }
+}
+
+// Backward compat alias
+export const generateManual = generateManualFromDocument;

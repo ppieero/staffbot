@@ -4,15 +4,14 @@ import { db } from "../db/index.js";
 import { manuals, manualSections, tenants } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { authenticate } from "../middleware/auth.js";
-import { generateManual } from "../services/manual-generator.service.js";
+import { generateManual, generateManualFromVideo } from "../services/manual-generator.service.js";
+import { transcribeVideo } from "../services/video-transcription.service.js";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 
-const router = Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
-});
+const router      = Router();
+const upload      = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const uploadVideo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 function resolveTenantId(req: Request): string | null {
   const user = req.user!;
@@ -63,8 +62,11 @@ router.get("/", authenticate, async (req: Request, res: Response) => {
         slug:           manuals.slug,
         status:         manuals.status,
         language:       manuals.language,
+        sourceType:     manuals.sourceType,
         sourceFileUrl:  manuals.sourceFileUrl,
         sourceFileName: manuals.sourceFileName,
+        videoUrl:       manuals.videoUrl,
+        videoDuration:  manuals.videoDuration,
         profileIds:     manuals.profileIds,
         generatedAt:    manuals.generatedAt,
         createdAt:      manuals.createdAt,
@@ -224,6 +226,89 @@ router.post(
         status:  "pending",
         title,
         message: "Manual generation started",
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// POST /api/manuals/upload-video — upload video, transcribe with Whisper, generate SOP
+router.post(
+  "/upload-video",
+  authenticate,
+  uploadVideo.single("file"),
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No video file uploaded" });
+
+      const user     = req.user!;
+      const tenantId = (user as any).role === "company_admin"
+        ? (user as any).tenantId
+        : req.body.tenantId;
+      if (!tenantId) return res.status(400).json({ error: "tenantId required" });
+
+      const ACCEPTED_TYPES = [
+        "video/mp4", "video/quicktime", "video/webm", "video/x-msvideo", "video/mpeg",
+        "audio/mpeg", "audio/mp4", "audio/wav", "audio/webm",
+      ];
+      if (!ACCEPTED_TYPES.includes(req.file.mimetype)) {
+        return res.status(400).json({
+          error: `Unsupported file type: ${req.file.mimetype}. Use MP4, MOV, WebM, AVI, or audio files.`,
+        });
+      }
+
+      const title    = ((req.body.title as string | undefined)?.trim()) || req.file.originalname.replace(/\.[^/.]+$/, "");
+      const baseSlug = slugify(title);
+
+      // Upload video to MinIO (best-effort)
+      const videoUrl = await uploadToMinio(req.file.buffer, req.file.originalname, tenantId).catch((e: any) => {
+        console.warn("[manual-video] MinIO upload skipped:", e?.message);
+        return "";
+      });
+
+      const [manual] = await db.insert(manuals).values({
+        tenantId,
+        title,
+        slug:           `${baseSlug}-${Date.now()}`,
+        status:         "transcribing" as any,
+        sourceType:     "video",
+        videoUrl,
+        sourceFileUrl:  videoUrl,
+        sourceFileName: req.file.originalname,
+        profileIds:     [],
+      }).returning();
+
+      const fileBuffer = req.file.buffer;
+      const fileName   = req.file.originalname;
+
+      setImmediate(async () => {
+        try {
+          console.log(`[manual-video] Starting transcription for ${manual.id}`);
+          const transcription = await transcribeVideo(fileBuffer, fileName);
+          console.log(`[manual-video] Transcription done: ${transcription.text.length} chars, lang: ${transcription.language}`);
+
+          await db.update(manuals).set({
+            transcription:  transcription.text,
+            videoDuration:  Math.round(transcription.duration),
+            language:       transcription.language,
+            status:         "generating",
+            updatedAt:      new Date(),
+          }).where(eq(manuals.id, manual.id));
+
+          await generateManualFromVideo(manual.id, transcription, title, transcription.duration);
+          console.log(`[manual-video] Manual generated for ${manual.id}`);
+        } catch (err: any) {
+          console.error("[manual-video] error:", err?.message);
+          await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manual.id));
+        }
+      });
+
+      res.status(201).json({
+        id:      manual.id,
+        status:  "transcribing",
+        title,
+        message: "Video uploaded — transcription started. Check back in 2-3 minutes.",
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
