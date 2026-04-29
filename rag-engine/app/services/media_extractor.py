@@ -118,7 +118,7 @@ def _extract_docx(content: bytes, tenant_id: str, document_id: str) -> Dict[str,
                     ext = "jpg"
                 idx = len(images)
                 url = _upload_image(img_bytes, ext, tenant_id, document_id, idx)
-                images.append({"url": url, "index": idx, "ext": ext})
+                images.append({"url": url, "index": idx, "page": None, "ext": ext})
             except Exception as e:
                 print(f"[media] DOCX image error {name}: {e}", flush=True)
 

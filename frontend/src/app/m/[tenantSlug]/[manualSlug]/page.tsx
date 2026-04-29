@@ -8,7 +8,7 @@ interface Section {
   contentHtml: string;
   sectionType: string;
   orderIndex:  number;
-  images:      { url: string }[];
+  images:      { url: string; page?: number | null; index?: number }[];
 }
 
 interface Manual {
@@ -72,17 +72,27 @@ function ManualViewerContent() {
     <div style={{ minHeight: "100vh", background: "#f8f9fa", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <style>{`
         @keyframes spin{to{transform:rotate(360deg)}}
-        .sb-section-body{font-size:15px;line-height:1.75;color:#333;margin-bottom:16px}
-        .sb-steps{padding-left:0;list-style:none;counter-reset:steps;margin-bottom:16px}
-        .sb-step{counter-increment:steps;display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:0.5px solid #eee}
-        .sb-step::before{content:counter(steps);width:28px;height:28px;border-radius:50%;background:#E6F1FB;color:#0C447C;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+        .sb-section-body{font-size:15px;line-height:1.75;color:#1a1a1a;margin-bottom:16px}
+        .sb-steps{padding-left:0;list-style:none;counter-reset:steps;margin-bottom:20px}
+        .sb-step{counter-increment:steps;display:flex;align-items:flex-start;gap:14px;padding:12px 0;border-bottom:1px solid #e8e8e8}
+        .sb-step:last-child{border-bottom:none}
+        .sb-step-num{min-width:32px;height:32px;border-radius:50%;background:#185FA5;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+        .sb-step-text{font-size:14px;color:#1a1a1a;line-height:1.6;flex:1;padding-top:6px}
+        .sb-step:not(:has(.sb-step-num))::before{content:counter(steps);min-width:32px;height:32px;border-radius:50%;background:#185FA5;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+        .sb-step:not(:has(.sb-step-num)) > :not(style){color:#1a1a1a;font-size:14px;line-height:1.6;padding-top:6px}
         .sb-checklist{list-style:none;padding:0;margin-bottom:16px}
-        .sb-check{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid #f0f0f0;font-size:14px;color:#333}
-        .sb-check-box{width:20px;height:20px;border:2px solid #B5D4F4;border-radius:4px;flex-shrink:0;margin-top:1px}
-        .sb-note{background:#FFF8E7;border-left:3px solid #EF9F27;padding:12px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:13px;color:#633806;line-height:1.6}
-        .sb-note-label{display:block;font-size:11px;font-weight:600;color:#854F0B;margin-bottom:3px;text-transform:uppercase;letter-spacing:.05em}
+        .sb-check{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a1a1a;line-height:1.5}
+        .sb-check:last-child{border-bottom:none}
+        .sb-check-box{min-width:20px;height:20px;border:2px solid #185FA5;border-radius:4px;flex-shrink:0;margin-top:2px}
+        .sb-note{background:#FFF8E7;border-left:4px solid #EF9F27;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:13px;color:#4a3000;line-height:1.6}
+        .sb-note-label{display:block;font-size:10px;font-weight:700;color:#854F0B;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em}
+        .sb-note p{color:#4a3000;margin:0}
+        .sb-warning{background:#FFF0F0;border-left:4px solid #E53E3E;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start}
+        .sb-warning-icon{font-size:18px;flex-shrink:0}
+        .sb-warning strong{display:block;font-size:12px;font-weight:700;color:#C53030;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+        .sb-warning p{font-size:13px;color:#742A2A;line-height:1.6;margin:0}
         @media(max-width:640px){
-          .sb-step::before{width:24px;height:24px;font-size:11px}
+          .sb-step-num{min-width:28px;height:28px;font-size:12px}
           .sb-section-body{font-size:14px}
         }
       `}</style>
@@ -139,16 +149,31 @@ function ManualViewerContent() {
           <div dangerouslySetInnerHTML={{ __html: section.contentHtml }} />
 
           {Array.isArray(section.images) && section.images.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              {section.images.map((img, i) => (
-                <img
-                  key={i}
-                  src={img.url}
-                  alt={`Image ${i + 1}`}
-                  style={{ width: "100%", borderRadius: 10, marginBottom: 12, objectFit: "cover" }}
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
+            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              {section.images.slice(0, 3).map((img, i) => (
+                <div key={i} style={{ borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb" }}>
+                  <img
+                    src={img.url}
+                    alt={`Section image ${i + 1}`}
+                    style={{ width: "100%", display: "block", objectFit: "contain", maxHeight: 320, background: "#f9fafb" }}
+                    onError={e => {
+                      const el = e.target as HTMLImageElement;
+                      if (el.parentElement) el.parentElement.style.display = "none";
+                    }}
+                    loading="lazy"
+                  />
+                  {img.page && (
+                    <div style={{ padding: "4px 10px", background: "#f9fafb", fontSize: 10, color: "#9ca3af", borderTop: "1px solid #e5e7eb" }}>
+                      Page {img.page}
+                    </div>
+                  )}
+                </div>
               ))}
+              {section.images.length > 3 && (
+                <p style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", margin: 0 }}>
+                  +{section.images.length - 3} more images in original document
+                </p>
+              )}
             </div>
           )}
         </div>

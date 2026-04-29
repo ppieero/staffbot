@@ -2,7 +2,7 @@ import time
 from typing import Optional
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, IsEmptyCondition, PayloadField
 import anthropic
 
 from app.config import get_settings
@@ -58,6 +58,8 @@ class RAGQueryService:
                     should=[
                         FieldCondition(key="profile_id",  match=MatchAny(any=effective_ids)),
                         FieldCondition(key="profile_ids", match=MatchAny(any=effective_ids)),
+                        # Unassigned manuals (profile_ids=[]) are visible to all profiles in the tenant
+                        IsEmptyCondition(is_empty=PayloadField(key="profile_ids")),
                     ]
                 ),
                 limit=TOP_K,

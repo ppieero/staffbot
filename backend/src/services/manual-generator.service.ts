@@ -11,16 +11,28 @@ function getClient(): Anthropic {
   return _client;
 }
 
+const LANG_NAMES: Record<string, string> = {
+  es: "Spanish", en: "English", fr: "French", pt: "Portuguese", de: "German",
+};
+
+interface ImageMeta {
+  url:   string;
+  index: number;
+  page?: number | null;
+  ext?:  string;
+}
+
 interface ManualSection {
-  title:       string;
-  type:        "intro" | "steps" | "note" | "checklist" | "content" | "warning";
-  content:     string;
-  steps?:      string[];
-  notes?:      string[];
-  checklist?:  string[];
-  warning?:    string;
-  clip_start?: number;
-  clip_end?:   number;
+  title:          string;
+  type:           "intro" | "steps" | "note" | "checklist" | "content" | "warning";
+  content:        string;
+  steps?:         string[];
+  notes?:         string[];
+  checklist?:     string[];
+  warning?:       string;
+  clip_start?:    number;
+  clip_end?:      number;
+  image_indices?: number[];
 }
 
 interface GeneratedManual {
@@ -33,24 +45,24 @@ function buildSectionHtml(section: ManualSection): string {
   let html = `<p class="sb-section-body">${section.content}</p>`;
 
   if (section.warning) {
-    html = `<div class="sb-warning"><span class="sb-warning-icon">⚠</span><div><strong>Advertencia de seguridad</strong><p>${section.warning}</p></div></div>` + html;
+    html = `<div class="sb-warning"><span class="sb-warning-icon">⚠</span><div><strong>Safety Warning</strong><p>${section.warning}</p></div></div>` + html;
   }
 
   if (section.steps?.length) {
-    html += `<ol class="sb-steps">${section.steps.map(s =>
-      `<li class="sb-step">${s}</li>`
+    html += `<ol class="sb-steps">${section.steps.map((s, i) =>
+      `<li class="sb-step"><span class="sb-step-num">${i + 1}</span><span class="sb-step-text">${s}</span></li>`
     ).join("")}</ol>`;
   }
 
   if (section.checklist?.length) {
     html += `<ul class="sb-checklist">${section.checklist.map(s =>
-      `<li class="sb-check"><span class="sb-check-box"></span><span>${s}</span></li>`
+      `<li class="sb-check"><span class="sb-check-box"></span><span style="color:#1a1a1a;line-height:1.5">${s}</span></li>`
     ).join("")}</ul>`;
   }
 
   if (section.notes?.length) {
     html += section.notes.map(n =>
-      `<div class="sb-note"><span class="sb-note-label">Nota</span><p>${n}</p></div>`
+      `<div class="sb-note"><span class="sb-note-label">Note</span><p>${n}</p></div>`
     ).join("");
   }
 
@@ -74,22 +86,42 @@ async function callClaude(prompt: string, systemPrompt: string): Promise<Generat
   return JSON.parse(cleaned);
 }
 
-async function saveSections(manualId: string, generated: GeneratedManual): Promise<void> {
+async function saveSections(
+  manualId:        string,
+  generated:       GeneratedManual,
+  extractedImages: ImageMeta[] = [],
+): Promise<void> {
   await db.delete(manualSections).where(eq(manualSections.manualId, manualId));
+
+  const MAX_IMAGES_PER_SECTION = 3;
 
   for (let i = 0; i < generated.sections.length; i++) {
     const s = generated.sections[i];
+
+    let sectionImages: ImageMeta[] = [];
+
+    if (s.image_indices?.length && extractedImages.length > 0) {
+      sectionImages = s.image_indices
+        .filter(idx => idx >= 0 && idx < extractedImages.length)
+        .slice(0, MAX_IMAGES_PER_SECTION)
+        .map(idx => extractedImages[idx]);
+    }
+
     const clipMeta = s.clip_start !== undefined
       ? [{ clip_start: s.clip_start, clip_end: s.clip_end }]
       : [];
 
+    const images = sectionImages.length > 0
+      ? sectionImages.map(img => ({ url: img.url, page: img.page ?? null, index: img.index }))
+      : clipMeta;
+
     await db.insert(manualSections).values({
-      manualId:    manualId,
+      manualId,
       orderIndex:  i,
       title:       s.title,
       contentHtml: buildSectionHtml(s),
       sectionType: s.type ?? "content",
-      images:      clipMeta,
+      images:      images as any,
     });
   }
 
@@ -101,7 +133,7 @@ async function saveSections(manualId: string, generated: GeneratedManual): Promi
     updatedAt:   new Date(),
   }).where(eq(manuals.id, manualId));
 
-  console.log(`[manual] Generated ${generated.sections.length} sections for ${manualId}`);
+  console.log(`[manual] Saved ${generated.sections.length} sections for ${manualId} | images distributed: ${extractedImages.length}`);
 
   try {
     const { chunks } = await indexManual(manualId);
@@ -112,30 +144,38 @@ async function saveSections(manualId: string, generated: GeneratedManual): Promi
 }
 
 export async function generateManualFromDocument(
-  manualId:       string,
-  pdfText:        string,
-  sourceTitle:    string,
-  targetLanguage: string = "auto",
+  manualId:        string,
+  pdfText:         string,
+  sourceTitle:     string,
+  targetLanguage:  string = "auto",
+  extractedImages: ImageMeta[] = [],
 ): Promise<void> {
   await db.update(manuals)
     .set({ status: "generating", updatedAt: new Date() })
     .where(eq(manuals.id, manualId));
 
-  const LANG_NAMES: Record<string, string> = { es: "Spanish", en: "English", fr: "French", pt: "Portuguese", de: "German" };
-  const langInstruction = targetLanguage !== "auto" && LANG_NAMES[targetLanguage]
-    ? `IMPORTANT: Generate ALL content in ${LANG_NAMES[targetLanguage]}. Translate from the source if needed. The "language" field must be "${targetLanguage}".`
-    : `Detect the language from the document content and use it throughout. Set "language" to the detected ISO code.`;
-
   try {
+    const langInstruction = targetLanguage !== "auto" && LANG_NAMES[targetLanguage]
+      ? `CRITICAL: Write the ENTIRE manual in ${LANG_NAMES[targetLanguage]}. Translate ALL content including section titles, steps, checklists and notes. The "language" field must be "${targetLanguage}".`
+      : `Detect language from content and write the entire manual in that language.`;
+
+    const hasImages = extractedImages.length > 0;
+    const imageListText = hasImages
+      ? `\n\nAVAILABLE IMAGES (${extractedImages.length} total):\n${extractedImages.map(img =>
+          `  - Image index ${img.index}: page ${img.page ?? "unknown"}`
+        ).join("\n")}\n\nFor each section, add "image_indices": [N, ...] with the indices of images that visually belong to that section based on their page number vs section content. Max 3 images per section. Omit or use [] if none apply.`
+      : "";
+
     const systemPrompt = `You are a professional technical writer specializing in operational manuals.
-Create well-structured web manuals that cover ALL topics in the source document.
+Create well-structured web manuals that cover ALL topics in the source document.${hasImages ? "\nAssign images to sections where they visually support the content based on page proximity." : ""}
 Respond ONLY with valid JSON, no markdown, no preamble.`;
 
     const prompt = `Analyze the following document and create a comprehensive web manual in JSON format.
 
 DOCUMENT TITLE: ${sourceTitle}
 DOCUMENT CONTENT:
-${pdfText.slice(0, 60000)}
+${pdfText.slice(0, 55000)}
+${imageListText}
 
 ${langInstruction}
 
@@ -151,7 +191,8 @@ Return JSON with this exact structure:
       "steps": ["Step 1", "Step 2"],
       "checklist": ["Check item 1"],
       "notes": ["Important note"],
-      "warning": "Critical safety warning if applicable"
+      "warning": "Critical safety warning if applicable",
+      "image_indices": [0, 2]
     }
   ]
 }
@@ -159,7 +200,7 @@ Return JSON with this exact structure:
 Create 6-12 sections covering ALL topics. First section = intro, last = summary/contacts.`;
 
     const generated = await callClaude(prompt, systemPrompt);
-    await saveSections(manualId, generated);
+    await saveSections(manualId, generated, extractedImages);
   } catch (err: any) {
     console.error("[manual] document generation error:", err?.message);
     await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));
@@ -178,7 +219,6 @@ export async function generateManualFromVideo(
     .set({ status: "generating", updatedAt: new Date() })
     .where(eq(manuals.id, manualId));
 
-  const LANG_NAMES: Record<string, string> = { es: "Spanish", en: "English", fr: "French", pt: "Portuguese", de: "German" };
   const effectiveLang = targetLanguage !== "auto" ? targetLanguage : (transcription.language ?? "auto");
   const langInstruction = LANG_NAMES[effectiveLang]
     ? `IMPORTANT: Generate ALL content in ${LANG_NAMES[effectiveLang]}. The "language" field must be "${effectiveLang}".`
@@ -220,7 +260,8 @@ Return JSON with this exact structure:
       "notes": ["Tip from video"],
       "warning": "Safety warning if mentioned",
       "clip_start": 0,
-      "clip_end": 45
+      "clip_end": 45,
+      "image_indices": []
     }
   ]
 }
@@ -232,7 +273,7 @@ IMPORTANT:
 - Create 5-10 sections covering the full procedure`;
 
     const generated = await callClaude(prompt, systemPrompt);
-    await saveSections(manualId, generated);
+    await saveSections(manualId, generated, []);
   } catch (err: any) {
     console.error("[manual] video generation error:", err?.message);
     await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));

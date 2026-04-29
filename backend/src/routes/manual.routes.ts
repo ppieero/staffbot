@@ -201,16 +201,23 @@ router.post(
           form.append("document_id", manual.id);
 
           let pdfText = "";
+          let extractedImages: Array<{ url: string; index: number; page?: number | null; ext?: string }> = [];
           try {
             const ragRes = await fetch(
               `${process.env.RAG_ENGINE_URL ?? "http://localhost:8000"}/extract-text`,
               { method: "POST", body: form },
             );
             if (ragRes.ok) {
-              const data = await ragRes.json() as { text?: string; error?: string };
+              const data = await ragRes.json() as { text?: string; images?: Array<{ url: string; index?: number; page?: number | null; ext?: string }>; error?: string };
               pdfText = data.text ?? "";
+              extractedImages = (data.images ?? []).map((img, i) => ({
+                url:   img.url,
+                index: img.index ?? i,
+                page:  img.page ?? null,
+                ext:   img.ext ?? "",
+              }));
               if (data.error) console.warn("[manual] RAG extract warning:", data.error);
-              console.log(`[manual] Extracted ${pdfText.length} chars from ${fileOrigname}`);
+              console.log(`[manual] Extracted ${pdfText.length} chars, ${extractedImages.length} images from ${fileOrigname}`);
             } else {
               const errBody = await ragRes.text().catch(() => "");
               console.warn(`[manual] RAG extract-text ${ragRes.status}: ${errBody.slice(0, 200)}`);
@@ -224,7 +231,7 @@ router.post(
             pdfText = `Document title: ${title}\nFile: ${fileOrigname}\n\nCreate a comprehensive professional manual based on the document title and context.`;
           }
 
-          await generateManual(manual.id, pdfText, title, targetLanguage);
+          await generateManual(manual.id, pdfText, title, targetLanguage, extractedImages);
         } catch (err: any) {
           console.error("[manual] async generation error:", err?.message);
         }

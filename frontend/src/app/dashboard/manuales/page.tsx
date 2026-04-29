@@ -392,7 +392,7 @@ export default function ManualesPage() {
                 </div>
                 {uploadLanguage !== "auto" && (
                   <p style={{ fontSize: "0.6875rem", color: "var(--text-muted)", marginTop: 5 }}>
-                    Claude will generate the entire manual in the selected language, translating the source if needed.
+                    Staffbot will generate the entire manual in the selected language, translating the source if needed.
                   </p>
                 )}
               </div>
@@ -422,7 +422,7 @@ export default function ManualesPage() {
                   </div>
                 ) : (
                   <p style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>
-                    Claude will analyze the document and generate a structured web manual with sections, numbered steps, checklists and notes. Takes 1-2 minutes.
+                    Staffbot will analyze the document and generate a structured web manual with sections, numbered steps, checklists and notes. Takes 1-2 minutes.
                   </p>
                 )}
               </div>
@@ -459,7 +459,7 @@ export default function ManualesPage() {
               <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>📄</div>
               <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.5rem" }}>No document manuals yet</h3>
               <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>
-                Upload a PDF and Claude will generate a structured web manual for your team
+                Upload a PDF and Staffbot will generate a structured web manual for your team
               </p>
               <button onClick={() => { setShowUpload(true); setUploadType("doc"); }} style={{ padding: "0.625rem 1.5rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: "pointer" }}>
                 + Create first manual
@@ -490,7 +490,7 @@ export default function ManualesPage() {
               <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>🎬</div>
               <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.5rem" }}>No video manuals yet</h3>
               <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>
-                Upload a training video and Claude will generate a structured SOP from the transcription
+                Upload a training video and Staffbot will generate a structured SOP from the transcription
               </p>
               <button onClick={() => { setShowUpload(true); setUploadType("video"); }} style={{ padding: "0.625rem 1.5rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: "pointer" }}>
                 + Upload first video

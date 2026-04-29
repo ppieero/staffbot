@@ -237,20 +237,22 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
 
   // Send to group or personal chat
   const replyTo = params.groupJid ?? params.from;
-  await sendText(replyTo, answer);
+  await sendText(replyTo, answer).catch((e: any) => console.error("[wa] answer sendText failed:", e?.message));
 
   // Append manual section link if the answer came from a manual
   const manualSrc = ((ragMeta.sources as any[]) ?? []).find(
     (s: any) => s.source_type === "manual_section" && s.manual_slug && s.tenant_slug
   );
   if (manualSrc) {
+    await new Promise(resolve => setTimeout(resolve, 6000));
     const sIdx      = manualSrc.section_index ?? 0;
     const total     = manualSrc.total_sections;
     const secLabel  = total
       ? ` — Section ${sIdx + 1} of ${total}: ${manualSrc.section_title ?? ""}`
       : manualSrc.section_title ? ` — ${manualSrc.section_title}` : "";
     const manualUrl = `https://staffbot.trainly.me/m/${manualSrc.tenant_slug}/${manualSrc.manual_slug}?s=${sIdx}`;
-    await sendText(replyTo, `📖 *${manualSrc.manual_title ?? "Manual"}*${secLabel}\n${manualUrl}`).catch(() => {});
+    await sendText(replyTo, `📖 *${manualSrc.manual_title ?? "Manual"}*${secLabel}\n${manualUrl}`)
+      .catch((e: any) => console.error("[wa] manual link sendText failed:", e?.message));
   }
 
   // Send images from document (up to 2).
