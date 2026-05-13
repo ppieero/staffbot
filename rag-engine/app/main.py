@@ -32,3 +32,28 @@ async def extract_text(
         return {"text": result["text"], "images": result["images"], "video_urls": result["video_urls"]}
     except Exception as e:
         return {"text": "", "error": str(e)}
+
+
+@app.post("/extract-pages")
+async def extract_pages(
+    file: UploadFile = File(...),
+    tenant_id: str = Form(...),
+    document_id: str = Form(...),
+):
+    """Extract one entry per page/slide from PDF/PPTX — for faithful manual mode."""
+    from fastapi import HTTPException
+    content   = await file.read()
+    fname     = file.filename or ""
+    file_type = fname.rsplit(".", 1)[-1].lower() if "." in fname else "pdf"
+    # normalise ppt → pptx so extract_slides_faithful handles it
+    if file_type == "ppt":
+        file_type = "pptx"
+
+    try:
+        from app.services.media_extractor import extract_slides_faithful
+        slides = extract_slides_faithful(content, file_type, tenant_id, document_id)
+        return {"slides": slides}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

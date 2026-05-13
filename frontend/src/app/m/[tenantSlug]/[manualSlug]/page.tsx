@@ -146,9 +146,25 @@ function ManualViewerContent() {
           <h2 style={{ fontSize: 22, fontWeight: 600, color: "#1a1a1a", marginBottom: 16, lineHeight: 1.3 }}>
             {section.title}
           </h2>
+          {/* Slide mode: show full-page image before text */}
+          {section.sectionType === "slide" && Array.isArray(section.images) && section.images.length > 0 && (
+            <div style={{ marginBottom: 20, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb", background: "#f9fafb" }}>
+              <img
+                src={section.images[0].url}
+                alt={section.title}
+                style={{ width: "100%", display: "block", objectFit: "contain" }}
+                onError={e => {
+                  const el = e.target as HTMLImageElement;
+                  if (el.parentElement) el.parentElement.style.display = "none";
+                }}
+              />
+            </div>
+          )}
+
           <div dangerouslySetInnerHTML={{ __html: section.contentHtml }} />
 
-          {Array.isArray(section.images) && section.images.length > 0 && (
+          {/* Non-slide mode: show supporting images after text */}
+          {section.sectionType !== "slide" && Array.isArray(section.images) && section.images.length > 0 && (
             <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 12 }}>
               {section.images.slice(0, 3).map((img, i) => (
                 <div key={i} style={{ borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb" }}>

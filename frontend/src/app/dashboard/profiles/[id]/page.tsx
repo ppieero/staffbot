@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
+import { useTranslation } from "@/lib/i18n";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,24 @@ const STATUS_STYLE: Record<string, { bg: string; color: string }> = {
   error:      { bg: "rgba(239,68,68,0.1)",   color: "#f87171" },
 };
 
+const NOTION_STATUS_STYLE: Record<string, { bg: string; color: string }> = {
+  pending:  { bg: "rgba(251,191,36,0.1)",  color: "#fbbf24" },
+  syncing:  { bg: "rgba(99,102,241,0.15)", color: "#a5b4fc" },
+  synced:   { bg: "rgba(74,222,128,0.1)",  color: "#4ade80" },
+  error:    { bg: "rgba(239,68,68,0.1)",   color: "#f87171" },
+};
+
+type NotionResource = {
+  id: string;
+  title: string;
+  objectType: string;
+  resourceCategory: string;
+  syncStatus: string;
+  chunkCount: number | null;
+  lastSyncedAt: string | null;
+  errorMessage: string | null;
+};
+
 function formatBytes(bytes: number | null): string {
   if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
@@ -106,6 +125,7 @@ export default function ProfileDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const { t } = useTranslation();
   getCurrentUser(); // available for future role-gated actions
 
   // ── Profile query ─────────────────────────────────────────────────────────
@@ -267,6 +287,16 @@ export default function ProfileDetailPage() {
       qc.invalidateQueries({ queryKey: ["profile", id] });
     },
   });
+
+  // ── Notion sources ────────────────────────────────────────────────────────
+
+  const { data: notionData } = useQuery<{ resources: NotionResource[] }>({
+    queryKey: ["notion-resources-by-profile", id],
+    queryFn: () => api.get(`/integrations/notion/resources/by-profile/${id}`).then((r) => r.data),
+    enabled: !!profile,
+  });
+
+  const notionResources = notionData?.resources ?? [];
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -533,6 +563,57 @@ export default function ProfileDetailPage() {
                     >
                       ×
                     </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Notion Sources ──────────────────────────────────────────────── */}
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "1.75rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
+            <div>
+              <h2 style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>{t("profile.notionSources")}</h2>
+              <p style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>
+                {t("profile.notionSourcesHint")}
+              </p>
+            </div>
+            <a
+              href="/dashboard/integraciones/notion"
+              style={{ fontSize: "0.8125rem", color: "var(--accent)", textDecoration: "none", whiteSpace: "nowrap" }}
+            >
+              {t("profile.manageNotion")}
+            </a>
+          </div>
+
+          {notionResources.length === 0 ? (
+            <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{t("profile.noNotionSources")}</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              {notionResources.map((nr) => {
+                const st = NOTION_STATUS_STYLE[nr.syncStatus] ?? NOTION_STATUS_STYLE.pending;
+                return (
+                  <div key={nr.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.75rem 1rem", background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <path d="M3 9h18M9 21V9" />
+                    </svg>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: "0.875rem", fontWeight: 500, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {nr.title}
+                      </p>
+                      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+                        {t(`notion.type.${nr.objectType}`)} · {t(`notion.category.${nr.resourceCategory}`)}
+                        {nr.chunkCount != null && ` · ${nr.chunkCount} ${t("notion.chunks")}`}
+                      </p>
+                    </div>
+                    <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: "0.6875rem", fontWeight: 600, background: st.bg, color: st.color, whiteSpace: "nowrap" }}>
+                      {t(`notion.status.${nr.syncStatus}`)}
+                    </span>
+                    {nr.syncStatus === "error" && nr.errorMessage && (
+                      <span title={nr.errorMessage} style={{ fontSize: "0.75rem", color: "#f87171", cursor: "help" }}>⚠</span>
+                    )}
                   </div>
                 );
               })}

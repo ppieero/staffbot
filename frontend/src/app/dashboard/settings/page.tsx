@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { setLang, type Lang } from "@/lib/i18n";
+import { setLang, useTranslation, type Lang } from "@/lib/i18n";
 
 const LANGUAGES = [
   { value: "es", label: "Español" },
@@ -27,7 +28,7 @@ const TIMEZONES = [
   "Europe/London",
 ];
 
-type Tab = "profile" | "preferences" | "notifications" | "audit";
+type Tab = "profile" | "preferences" | "notifications" | "integrations" | "audit";
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleString("en-GB", {
@@ -44,7 +45,9 @@ const ACTION_COLORS: Record<string, { bg: string; color: string }> = {
 };
 
 export default function SettingsPage() {
+  const { t }   = useTranslation();
   const qc = useQueryClient();
+  const router = useRouter();
   const [tab, setTab]       = useState<Tab>("profile");
   const [saving, setSaving] = useState(false);
   const [toast, setToast]   = useState<{ msg: string; ok?: boolean } | null>(null);
@@ -73,6 +76,12 @@ export default function SettingsPage() {
     enabled: tab === "audit",
   });
 
+  const { data: notionConn } = useQuery<{ connected: boolean; workspaceName?: string; workspaceIcon?: string | null }>({
+    queryKey: ["notion-status"],
+    queryFn: () => api.get("/integrations/notion").then((r) => r.data),
+    enabled: tab === "integrations",
+  });
+
   const set = (key: string, val: unknown) =>
     setForm((f) => ({ ...(f ?? {}), [key]: val }));
 
@@ -82,10 +91,10 @@ export default function SettingsPage() {
       await api.put("/users/me", form);
       qc.invalidateQueries({ queryKey: ["user-me"] });
       if (form?.languagePref) setLang(form.languagePref as Lang);
-      showToast("Settings saved", true);
+      showToast(t("settings.saved"), true);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error;
-      showToast(msg ?? "Save failed");
+      showToast(msg ?? t("settings.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -93,9 +102,9 @@ export default function SettingsPage() {
 
   const handlePasswordChange = async () => {
     if (pwForm.newPassword !== pwForm.confirmPassword)
-      return showToast("New passwords don't match");
+      return showToast(t("settings.pwMismatch"));
     if (pwForm.newPassword.length < 8)
-      return showToast("Password must be at least 8 characters");
+      return showToast(t("settings.pwTooShort"));
     setSaving(true);
     try {
       await api.put("/users/me/password", {
@@ -103,10 +112,10 @@ export default function SettingsPage() {
         newPassword: pwForm.newPassword,
       });
       setPwForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      showToast("Password changed", true);
+      showToast(t("settings.pwChanged"), true);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error;
-      showToast(msg ?? "Password change failed");
+      showToast(msg ?? t("settings.pwChangeFailed"));
     } finally {
       setSaving(false);
     }
@@ -158,7 +167,7 @@ export default function SettingsPage() {
         alignSelf: "flex-start",
       }}
     >
-      {saving ? "Saving…" : label}
+      {saving ? t("settings.saving") : label}
     </button>
   );
 
@@ -187,10 +196,11 @@ export default function SettingsPage() {
   );
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "profile",       label: "Profile"       },
-    { id: "preferences",   label: "Preferences"   },
-    { id: "notifications", label: "Notifications" },
-    { id: "audit",         label: "Audit Log"     },
+    { id: "profile",       label: t("settings.tab.profile")       },
+    { id: "preferences",   label: t("settings.tab.preferences")   },
+    { id: "notifications", label: t("settings.tab.notifications") },
+    { id: "integrations",  label: t("settings.tab.integrations")  },
+    { id: "audit",         label: t("settings.tab.audit")         },
   ];
 
   return (
@@ -211,9 +221,9 @@ export default function SettingsPage() {
 
       {/* Header */}
       <div style={{ marginBottom: "1.75rem" }}>
-        <h1 style={{ fontSize: "1.375rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Settings</h1>
+        <h1 style={{ fontSize: "1.375rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{t("settings.title")}</h1>
         <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-          Manage your account and preferences
+          {t("settings.subtitle")}
         </p>
       </div>
 
@@ -244,32 +254,32 @@ export default function SettingsPage() {
       {form && tab === "profile" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {card(<>
-            {sectionTitle("Personal Information")}
+            {sectionTitle(t("settings.profile.section"))}
             {twoCol(<>
               <div>
-                {fieldLabel("First Name")}
+                {fieldLabel(t("settings.profile.firstName"))}
                 <input value={String(form.firstName ?? "")} onChange={(e) => set("firstName", e.target.value)} style={inputStyle} />
               </div>
               <div>
-                {fieldLabel("Last Name")}
+                {fieldLabel(t("settings.profile.lastName"))}
                 <input value={String(form.lastName ?? "")} onChange={(e) => set("lastName", e.target.value)} style={inputStyle} />
               </div>
             </>)}
             <div>
-              {fieldLabel("Email", "(contact your admin to change)")}
+              {fieldLabel(t("settings.profile.email"), t("settings.profile.emailHint"))}
               <input value={String(form.email ?? "")} disabled style={{ ...inputStyle, opacity: 0.6, cursor: "not-allowed" }} />
             </div>
             <div>
-              {fieldLabel("Role")}
+              {fieldLabel(t("settings.profile.role"))}
               <input value={String(form.role ?? "")} disabled style={{ ...inputStyle, opacity: 0.6, cursor: "not-allowed" }} />
             </div>
-            {saveBtn("Save Profile")}
+            {saveBtn(t("settings.profile.save"))}
           </>)}
 
           {card(<>
-            {sectionTitle("Change Password")}
+            {sectionTitle(t("settings.password.section"))}
             <div>
-              {fieldLabel("Current Password")}
+              {fieldLabel(t("settings.password.current"))}
               <input
                 type="password" value={pwForm.currentPassword}
                 onChange={(e) => setPwForm((f) => ({ ...f, currentPassword: e.target.value }))}
@@ -278,7 +288,7 @@ export default function SettingsPage() {
             </div>
             {twoCol(<>
               <div>
-                {fieldLabel("New Password", "(min 8 chars)")}
+                {fieldLabel(t("settings.password.new"), t("settings.password.newHint"))}
                 <input
                   type="password" value={pwForm.newPassword}
                   onChange={(e) => setPwForm((f) => ({ ...f, newPassword: e.target.value }))}
@@ -286,7 +296,7 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                {fieldLabel("Confirm New Password")}
+                {fieldLabel(t("settings.password.confirm"))}
                 <input
                   type="password" value={pwForm.confirmPassword}
                   onChange={(e) => setPwForm((f) => ({ ...f, confirmPassword: e.target.value }))}
@@ -303,7 +313,7 @@ export default function SettingsPage() {
                 cursor: saving ? "not-allowed" : "pointer", alignSelf: "flex-start",
               }}
             >
-              Change Password
+              {t("settings.password.change")}
             </button>
           </>)}
         </div>
@@ -313,20 +323,20 @@ export default function SettingsPage() {
       {form && tab === "preferences" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {card(<>
-            {sectionTitle("Dashboard Preferences")}
+            {sectionTitle(t("settings.prefs.section"))}
             <div>
-              {fieldLabel("Language")}
+              {fieldLabel(t("settings.prefs.language"))}
               <select value={String(form.languagePref ?? "es")} onChange={(e) => set("languagePref", e.target.value)} style={inputStyle}>
                 {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
               </select>
             </div>
             <div>
-              {fieldLabel("Timezone")}
+              {fieldLabel(t("settings.prefs.timezone"))}
               <select value={String(form.timezone ?? "America/Lima")} onChange={(e) => set("timezone", e.target.value)} style={inputStyle}>
                 {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
               </select>
             </div>
-            {saveBtn("Save Preferences")}
+            {saveBtn(t("settings.prefs.save"))}
           </>)}
         </div>
       )}
@@ -335,13 +345,13 @@ export default function SettingsPage() {
       {form && tab === "notifications" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {card(<>
-            {sectionTitle("Notification Channels")}
+            {sectionTitle(t("settings.notif.channels"))}
             <p style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>
-              Receive alerts on WhatsApp or Telegram when important events happen.
+              {t("settings.notif.channelsHint")}
             </p>
             {twoCol(<>
               <div>
-                {fieldLabel("WhatsApp Number", "(for notifications)")}
+                {fieldLabel(t("settings.notif.whatsapp"), t("settings.notif.whatsappHint"))}
                 <input
                   value={String(form.phoneWhatsapp ?? "")}
                   onChange={(e) => set("phoneWhatsapp", e.target.value)}
@@ -350,7 +360,7 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                {fieldLabel("Telegram ID", "(username or numeric)")}
+                {fieldLabel(t("settings.notif.telegram"), t("settings.notif.telegramHint"))}
                 <input
                   value={String(form.telegramId ?? "")}
                   onChange={(e) => set("telegramId", e.target.value)}
@@ -362,29 +372,92 @@ export default function SettingsPage() {
           </>)}
 
           {card(<>
-            {sectionTitle("Notification Events")}
+            {sectionTitle(t("settings.notif.events"))}
             <Toggle
               fieldKey="notifyEscalations"
-              label="Escalated Conversations"
-              hint="Alert when an employee conversation is escalated to HR"
+              label={t("settings.notif.escalations")}
+              hint={t("settings.notif.escalationsHint")}
             />
             <Toggle
               fieldKey="notifyNewEmployees"
-              label="New Employee Registered"
-              hint="Alert when a new employee is added to your company"
+              label={t("settings.notif.newEmployees")}
+              hint={t("settings.notif.newEmployeesHint")}
             />
             <Toggle
               fieldKey="notifyWhatsapp"
-              label="Send via WhatsApp"
-              hint="Receive notifications on your WhatsApp number"
+              label={t("settings.notif.viaWhatsapp")}
+              hint={t("settings.notif.viaWhatsappHint")}
             />
             <Toggle
               fieldKey="notifyTelegram"
-              label="Send via Telegram"
-              hint="Receive notifications on your Telegram account"
+              label={t("settings.notif.viaTelegram")}
+              hint={t("settings.notif.viaTelegramHint")}
             />
-            {saveBtn("Save Notifications")}
+            {saveBtn(t("settings.notif.save"))}
           </>)}
+        </div>
+      )}
+
+      {/* ── Integrations tab ──────────────────────────────────────────────────── */}
+      {tab === "integrations" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* Notion card */}
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "0.875rem 1.25rem", borderBottom: "1px solid var(--border)" }}>
+              <p style={{ margin: 0, fontSize: "0.9375rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                Notion
+              </p>
+              <p style={{ margin: "0.2rem 0 0", fontSize: "0.8125rem", color: "var(--text-secondary)" }}>
+                {t("settings.integ.notionDesc")}
+              </p>
+            </div>
+            <div style={{ padding: "1.25rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+              {notionConn?.connected ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {notionConn.workspaceIcon && <span style={{ fontSize: 22 }}>{notionConn.workspaceIcon}</span>}
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                      <span style={{
+                        display: "inline-block", width: 7, height: 7, borderRadius: "50%",
+                        background: "#4ade80",
+                      }} />
+                      <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-primary)" }}>
+                        {t("settings.integ.connectedLabel")} {notionConn.workspaceName}
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                      {t("settings.integ.manageHint")}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                    <span style={{
+                      display: "inline-block", width: 7, height: 7, borderRadius: "50%",
+                      background: "#64748b",
+                    }} />
+                    <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-secondary)" }}>
+                      {t("notion.notConnected")}
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {t("settings.integ.notConnectedHint")}
+                  </p>
+                </div>
+              )}
+              <button
+                onClick={() => router.push("/dashboard/settings/integraciones")}
+                style={{
+                  padding: "8px 18px", borderRadius: 8, border: "1px solid var(--border)",
+                  background: "var(--accent)", color: "#fff", fontSize: "0.8125rem",
+                  fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                {notionConn?.connected ? t("settings.integ.manage") : t("settings.integ.configure")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -393,8 +466,8 @@ export default function SettingsPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
             <div style={{ padding: "0.875rem 1.25rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              {sectionTitle("Audit Log")}
-              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontFamily: "monospace" }}>Page {auditPage}</span>
+              {sectionTitle(t("settings.tab.audit"))}
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontFamily: "monospace" }}>{t("settings.audit.page")} {auditPage}</span>
             </div>
 
             {!auditData ? (
@@ -403,7 +476,7 @@ export default function SettingsPage() {
               </div>
             ) : auditData.data?.length === 0 ? (
               <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-                No audit logs yet
+                {t("settings.audit.noLogs")}
               </div>
             ) : (
               auditData.data?.map((log: {
@@ -466,7 +539,7 @@ export default function SettingsPage() {
                 cursor: auditPage === 1 ? "not-allowed" : "pointer", opacity: auditPage === 1 ? 0.5 : 1,
               }}
             >
-              ← Prev
+              {t("settings.audit.prev")}
             </button>
             <button
               onClick={() => setAuditPage((p) => p + 1)}
@@ -479,7 +552,7 @@ export default function SettingsPage() {
                 opacity: !auditData?.data?.length || auditData.data.length < 20 ? 0.5 : 1,
               }}
             >
-              Next →
+              {t("settings.audit.next")}
             </button>
           </div>
         </div>

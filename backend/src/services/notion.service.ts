@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   notionConnections,
@@ -235,6 +235,25 @@ export async function patchIndexImages(
   }
 
   return { resourceId, indexImages };
+}
+
+export async function getResourcesByProfile(tenantId: string, profileId: string) {
+  const assignments = await db
+    .select({ notionResourceId: notionResourceProfiles.notionResourceId })
+    .from(notionResourceProfiles)
+    .where(eq(notionResourceProfiles.profileId, profileId));
+
+  if (assignments.length === 0) return [];
+
+  const resourceIds = assignments.map(a => a.notionResourceId);
+
+  return db
+    .select()
+    .from(notionResources)
+    .where(and(
+      eq(notionResources.tenantId, tenantId),
+      inArray(notionResources.id, resourceIds)
+    ));
 }
 
 export async function triggerSync(tenantId: string, resourceId: string): Promise<void> {

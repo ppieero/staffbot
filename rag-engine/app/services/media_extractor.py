@@ -54,7 +54,7 @@ def _upload_image(img_bytes: bytes, ext: str, tenant_id: str, document_id: str, 
 
 MAX_IMAGES_PER_DOCUMENT = 50   # cap to avoid unbounded MinIO uploads blocking the event loop
 
-def _extract_pdf(content: bytes, tenant_id: str, document_id: str) -> Dict[str, Any]:
+def _extract_pdf(content: bytes, tenant_id: str, document_id: str, upload_images: bool = True) -> Dict[str, Any]:
     import fitz  # pymupdf
 
     doc        = fitz.open(stream=content, filetype="pdf")
@@ -67,8 +67,8 @@ def _extract_pdf(content: bytes, tenant_id: str, document_id: str) -> Dict[str, 
         pages_text.append(text)
         video_urls.extend(_VIDEO_RE.findall(text))
 
-        if len(images) >= MAX_IMAGES_PER_DOCUMENT:
-            continue  # still extract text from remaining pages
+        if not upload_images or len(images) >= MAX_IMAGES_PER_DOCUMENT:
+            continue
 
         for img_info in page.get_images(full=True):
             if len(images) >= MAX_IMAGES_PER_DOCUMENT:
@@ -94,7 +94,7 @@ def _extract_pdf(content: bytes, tenant_id: str, document_id: str) -> Dict[str, 
     }
 
 
-def _extract_docx(content: bytes, tenant_id: str, document_id: str) -> Dict[str, Any]:
+def _extract_docx(content: bytes, tenant_id: str, document_id: str, upload_images: bool = True) -> Dict[str, Any]:
     import zipfile
     from docx import Document
 
@@ -103,40 +103,185 @@ def _extract_docx(content: bytes, tenant_id: str, document_id: str) -> Dict[str,
     video_urls = list(set(_VIDEO_RE.findall(text)))
 
     images: List[Dict[str, Any]] = []
-    with zipfile.ZipFile(io.BytesIO(content)) as z:
-        for name in z.namelist():
-            if not name.startswith("word/media/"):
-                continue
-            ext = name.rsplit(".", 1)[-1].lower()
-            if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
-                continue
-            try:
-                img_bytes = z.read(name)
-                if len(img_bytes) < 5_000:
+    if upload_images:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            for name in z.namelist():
+                if not name.startswith("word/media/"):
                     continue
-                if ext == "jpeg":
-                    ext = "jpg"
-                idx = len(images)
-                url = _upload_image(img_bytes, ext, tenant_id, document_id, idx)
-                images.append({"url": url, "index": idx, "page": None, "ext": ext})
-            except Exception as e:
-                print(f"[media] DOCX image error {name}: {e}", flush=True)
+                ext = name.rsplit(".", 1)[-1].lower()
+                if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+                    continue
+                try:
+                    img_bytes = z.read(name)
+                    if len(img_bytes) < 5_000:
+                        continue
+                    if ext == "jpeg":
+                        ext = "jpg"
+                    idx = len(images)
+                    url = _upload_image(img_bytes, ext, tenant_id, document_id, idx)
+                    images.append({"url": url, "index": idx, "page": None, "ext": ext})
+                except Exception as e:
+                    print(f"[media] DOCX image error {name}: {e}", flush=True)
 
     return {"text": text, "images": images, "video_urls": video_urls}
 
 
+# ── Faithful slide/page extraction ───────────────────────────────────────────
+
+def _upload_slide_image(img_bytes: bytes, tenant_id: str, document_id: str, page: int) -> str:
+    bucket = os.getenv("AWS_S3_BUCKET", "staffbot-docs")
+    key    = f"{tenant_id}/{document_id}/slides/page_{page}.png"
+    _s3().put_object(Bucket=bucket, Key=key, Body=img_bytes, ContentType="image/png")
+    public_base = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
+    if public_base:
+        return f"{public_base}/{key}"
+    endpoint = os.getenv("AWS_ENDPOINT_URL", "http://localhost:9000")
+    return f"{endpoint}/{bucket}/{key}"
+
+
+def _first_nonempty_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:100]
+    return ""
+
+
+def _extract_pdf_faithful(content: bytes, tenant_id: str, document_id: str) -> List[Dict[str, Any]]:
+    """Render each PDF page as PNG + extract text. Returns one dict per page."""
+    import fitz
+
+    doc    = fitz.open(stream=content, filetype="pdf")
+    slides = []
+
+    for page_num, page in enumerate(doc):
+        text = page.get_text().strip()
+        title = _first_nonempty_line(text) or f"Página {page_num + 1}"
+
+        # Render at 150 DPI (scale factor ≈ 2.08 for 72 dpi base)
+        mat      = fitz.Matrix(150 / 72, 150 / 72)
+        pix      = page.get_pixmap(matrix=mat, alpha=False)
+        img_bytes = pix.tobytes("png")
+
+        image_url = None
+        try:
+            image_url = _upload_slide_image(img_bytes, tenant_id, document_id, page_num + 1)
+        except Exception as e:
+            print(f"[media] slide image upload error page {page_num + 1}: {e}", flush=True)
+
+        slides.append({
+            "page":         page_num + 1,
+            "title":        title,
+            "text":         text,
+            "notes":        "",
+            "image_url":    image_url,
+            "source_format": "pdf",
+        })
+
+    doc.close()
+    return slides
+
+
+def _extract_pptx_faithful(content: bytes, tenant_id: str, document_id: str) -> List[Dict[str, Any]]:
+    """Extract one entry per slide using python-pptx. Renders page images from embedded pics."""
+    from pptx import Presentation
+    from pptx.util import Pt
+    import zipfile
+
+    prs    = Presentation(io.BytesIO(content))
+    slides = []
+
+    # Build map: slide index → embedded media files
+    # PPTX zip has ppt/slides/slide{n}.xml; media in ppt/media/
+    # We correlate via relationship IDs per slide
+    with zipfile.ZipFile(io.BytesIO(content)) as z:
+        media_files = {name.split("/")[-1]: name for name in z.namelist() if name.startswith("ppt/media/")}
+
+        for slide_idx, slide in enumerate(prs.slides):
+            page_num = slide_idx + 1
+
+            # ── Extract title ──────────────────────────────────────────
+            title_text = ""
+            if slide.shapes.title and slide.shapes.title.has_text_frame:
+                title_text = slide.shapes.title.text_frame.text.strip()
+
+            # ── Extract all text ───────────────────────────────────────
+            text_parts: List[str] = []
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                for para in shape.text_frame.paragraphs:
+                    line = "".join(run.text for run in para.runs).strip()
+                    if line:
+                        text_parts.append(line)
+
+            full_text = "\n".join(text_parts)
+            if not title_text:
+                title_text = _first_nonempty_line(full_text) or f"Slide {page_num}"
+
+            # ── Extract speaker notes ──────────────────────────────────
+            notes_text = ""
+            if slide.has_notes_slide:
+                tf = slide.notes_slide.notes_text_frame
+                notes_text = tf.text.strip() if tf else ""
+
+            # ── Extract first significant image from slide ─────────────
+            image_url = None
+            for rel in slide.part.rels.values():
+                if "image" in rel.reltype:
+                    try:
+                        img_bytes = rel.target_part.blob
+                        if len(img_bytes) < 5_000:
+                            continue
+                        # Determine extension from content type
+                        ct  = rel.target_part.content_type
+                        ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else "png")
+                        key = f"{tenant_id}/{document_id}/slides/page_{page_num}_img.{ext}"
+                        bucket = os.getenv("AWS_S3_BUCKET", "staffbot-docs")
+                        _s3().put_object(Bucket=bucket, Key=key, Body=img_bytes, ContentType=f"image/{ext}")
+                        public_base = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
+                        endpoint    = os.getenv("AWS_ENDPOINT_URL", "http://localhost:9000")
+                        image_url   = f"{public_base}/{key}" if public_base else f"{endpoint}/{bucket}/{key}"
+                        break  # one representative image per slide
+                    except Exception as e:
+                        print(f"[media] PPTX slide image error slide {page_num}: {e}", flush=True)
+
+            slides.append({
+                "page":          page_num,
+                "title":         title_text,
+                "text":          full_text,
+                "notes":         notes_text,
+                "image_url":     image_url,
+                "source_format": "pptx",
+            })
+
+    return slides
+
+
+def extract_slides_faithful(content: bytes, file_type: str, tenant_id: str, document_id: str) -> List[Dict[str, Any]]:
+    """
+    Extract one entry per page/slide, preserving order.
+    Returns: [{ page, title, text, notes, image_url, source_format }]
+    """
+    if file_type == "pdf":
+        return _extract_pdf_faithful(content, tenant_id, document_id)
+    if file_type in ("pptx", "ppt", "odp"):
+        return _extract_pptx_faithful(content, tenant_id, document_id)
+    raise ValueError(f"Unsupported format for faithful extraction: {file_type}")
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def extract_media(content: bytes, file_type: str, tenant_id: str, document_id: str) -> Dict[str, Any]:
+def extract_media(content: bytes, file_type: str, tenant_id: str, document_id: str, index_images: bool = True) -> Dict[str, Any]:
     """
     Extract text, images, and video URLs from a document.
     Returns { text, images: [{url, page?, index, ext}], video_urls: [str] }
-    Images are uploaded to MinIO; image upload errors are logged but don't abort indexing.
+    When index_images=False, images are not uploaded to MinIO and the images list is empty.
     """
     if file_type == "pdf":
-        return _extract_pdf(content, tenant_id, document_id)
+        return _extract_pdf(content, tenant_id, document_id, upload_images=index_images)
     if file_type in ("docx", "doc"):
-        return _extract_docx(content, tenant_id, document_id)
+        return _extract_docx(content, tenant_id, document_id, upload_images=index_images)
     # txt / xlsx / other — text-only with video URL detection
     if file_type == "txt":
         text = content.decode("utf-8", errors="ignore")
