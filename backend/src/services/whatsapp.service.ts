@@ -239,6 +239,17 @@ export async function handleWhatsAppMessage(params: IncomingMessage): Promise<vo
   const replyTo = params.groupJid ?? params.from;
   await sendText(replyTo, answer).catch((e: any) => console.error("[wa] answer sendText failed:", e?.message));
 
+  // Append Notion page link if the answer came from Notion
+  const notionSrc = ((ragMeta.sources as any[]) ?? []).find(
+    (s: any) => s.source_type === "notion_page" && s.notion_page_url
+  );
+  if (notionSrc) {
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    const notionTitle = notionSrc.notion_page_title ?? "Notion";
+    await sendText(replyTo, `📝 *${notionTitle}*\n${notionSrc.notion_page_url}`)
+      .catch((e: any) => console.error("[wa] notion link sendText failed:", e?.message));
+  }
+
   // Append manual section link if the answer came from a manual
   const manualSrc = ((ragMeta.sources as any[]) ?? []).find(
     (s: any) => s.source_type === "manual_section" && s.manual_slug && s.tenant_slug

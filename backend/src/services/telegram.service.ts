@@ -305,6 +305,15 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
   // ── 12. Send reply ────────────────────────────────────────────────────────
   await sendMessage(chatId, answer);
 
+  // Append Notion page link if the answer came from Notion
+  const notionSrc = (sources as any[]).find(
+    (s: any) => s.source_type === "notion_page" && s.notion_page_url
+  );
+  if (notionSrc) {
+    const notionTitle = notionSrc.notion_page_title ?? "Notion";
+    await sendMessage(chatId, `📝 *${notionTitle}*\n${notionSrc.notion_page_url}`).catch(() => {});
+  }
+
   // Append manual section link if the answer came from a manual
   const manualSrc = (sources as any[]).find(
     (s: any) => s.source_type === "manual_section" && s.manual_slug && s.tenant_slug

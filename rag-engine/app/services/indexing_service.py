@@ -156,6 +156,10 @@ class DocumentIndexer:
         notion_resource_id: Optional[str] = None,
         resource_category: Optional[str] = None,
         embed_provider: EmbedProvider = "openai",
+        source_type: Optional[str] = None,
+        page_url: Optional[str] = None,
+        page_title: Optional[str] = None,
+        notion_page_id: Optional[str] = None,
     ) -> int:
         """
         Chunk, embed, and upsert pre-extracted text (e.g. from Notion) into Qdrant.
@@ -201,6 +205,10 @@ class DocumentIndexer:
                         "chunk_index":          i + j,
                         "text":                 chunk,
                         "text_preview":         chunk[:200],
+                        "source_type":          source_type or "notion_page",
+                        "page_url":             page_url,
+                        "page_title":           page_title or title,
+                        "notion_page_id":       notion_page_id,
                     },
                 )
                 for j, (chunk, vec) in enumerate(zip(batch, embeddings))

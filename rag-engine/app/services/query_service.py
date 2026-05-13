@@ -146,10 +146,14 @@ class RAGQueryService:
                 "manual_title":   r.payload.get("manual_title"),
                 "manual_slug":    r.payload.get("manual_slug"),
                 "tenant_slug":    r.payload.get("tenant_slug"),
-                "chunk_index":    r.payload.get("chunk_index"),
-                "embed_provider": embed_provider,
-                "score":          round(r.score, 4),
-                "excerpt":        r.payload.get("text_preview"),
+                "chunk_index":        r.payload.get("chunk_index"),
+                "embed_provider":     embed_provider,
+                "score":              round(r.score, 4),
+                "excerpt":            r.payload.get("text_preview"),
+                "notion_page_id":     r.payload.get("notion_page_id"),
+                "notion_page_url":    r.payload.get("page_url"),
+                "notion_page_title":  r.payload.get("page_title"),
+                "notion_resource_id": r.payload.get("notion_resource_id"),
             })
 
         return {

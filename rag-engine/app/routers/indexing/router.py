@@ -30,6 +30,11 @@ class IndexTextRequest(BaseModel):
     title: str
     text: str
     embed_provider: str = "openai"
+    # Notion page metadata — stored in Qdrant so query_service can return source links
+    source_type: Optional[str] = None      # e.g. "notion_page"
+    page_url: Optional[str] = None         # https://notion.so/{id}
+    page_title: Optional[str] = None       # human-readable page title
+    notion_page_id: Optional[str] = None   # Notion object UUID
 
 
 class DeleteRequest(BaseModel):
@@ -59,6 +64,10 @@ async def index_text(req: IndexTextRequest):
             title=req.title,
             text=req.text,
             embed_provider=req.embed_provider,
+            source_type=req.source_type,
+            page_url=req.page_url,
+            page_title=req.page_title,
+            notion_page_id=req.notion_page_id,
         )
         return {"status": "indexed", "source_id": req.source_id, "chunk_count": chunk_count}
     except Exception as exc:
