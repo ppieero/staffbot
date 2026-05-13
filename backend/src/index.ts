@@ -3,6 +3,7 @@ dotenv.config();
 
 import express from "express";
 import { recoverStaleDocuments } from "./services/document.service";
+import { scheduleDailyCleanup } from "./jobs/cleanup.job";
 import authRoutes from "./routes/auth.routes";
 import tenantRoutes from "./routes/tenant.routes";
 import profileRoutes from "./routes/profile.routes";
@@ -15,6 +16,7 @@ import userRoutes from "./routes/user.routes";
 import manualRoutes from "./routes/manual.routes";
 import tokensRoutes from "./routes/tokens.routes";
 import webhookRoutes from "./routes/webhook.routes";
+import notionRoutes from "./routes/notion.routes";
 
 const app = express();
 const port = process.env.PORT ?? 4000;
@@ -38,6 +40,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/manuals", manualRoutes);
 app.use("/api/tokens", tokensRoutes);
+app.use("/api/integrations/notion", notionRoutes);
 
 // Webhooks — no auth middleware, Meta verifies via WHATSAPP_VERIFY_TOKEN
 app.use("/webhooks", webhookRoutes);
@@ -54,6 +57,8 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 app.listen(port, () => {
   console.log(`[backend] listening on port ${port}`);
+
+  scheduleDailyCleanup();
 
   // Recover documents stuck in "processing" on startup and every 5 minutes
   recoverStaleDocuments().catch((e) => console.error("[recovery] startup error:", e));

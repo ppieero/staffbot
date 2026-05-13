@@ -4,8 +4,9 @@ import { db } from "../db/index.js";
 import { manuals, manualSections, tenants, positionProfiles } from "../db/schema.js";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { authenticate } from "../middleware/auth.js";
-import { generateManual, generateManualFromVideo } from "../services/manual-generator.service.js";
+import { generateManual, generateManualFromVideo, generateManualFaithful } from "../services/manual-generator.service.js";
 import { indexManual, deindexManual } from "../services/manual-indexer.service.js";
+import { cleanupManual } from "../lib/storage-cleanup.js";
 import { transcribeVideo } from "../services/video-transcription.service.js";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
@@ -249,6 +250,68 @@ router.post(
   },
 );
 
+// POST /api/manuals/upload-faithful — slide-faithful manual (PDF/PPTX/ODP — no AI rewriting)
+router.post(
+  "/upload-faithful",
+  authenticate,
+  upload.single("file"),
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+      const user     = req.user!;
+      const tenantId = (user as any).role === "company_admin"
+        ? (user as any).tenantId
+        : req.body.tenantId;
+      if (!tenantId) return res.status(400).json({ error: "tenantId required" });
+
+      const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
+      if (!["pdf", "pptx", "ppt", "odp"].includes(ext)) {
+        return res.status(400).json({ error: "Unsupported file type. Use PDF, PPTX, PPT, or ODP." });
+      }
+
+      const title    = (req.body.title as string | undefined)?.trim()
+        || req.file.originalname.replace(/\.[^/.]+$/, "");
+      const baseSlug = slugify(title);
+      const profileIds = req.body.profileIds ? JSON.parse(req.body.profileIds) : [];
+
+      const fileUrl = await uploadToMinio(req.file.buffer, req.file.originalname, tenantId)
+        .catch((e: any) => { console.warn("[manual-faithful] MinIO upload skipped:", e?.message); return ""; });
+
+      const [manual] = await db.insert(manuals).values({
+        tenantId,
+        title,
+        slug:           `${baseSlug}-${Date.now()}`,
+        status:         "pending",
+        sourceFileUrl:  fileUrl,
+        sourceFileName: req.file.originalname,
+        profileIds,
+      }).returning();
+
+      const fileBuffer   = req.file.buffer;
+      const fileMimetype = req.file.mimetype;
+      const fileOrigname = req.file.originalname;
+
+      setImmediate(async () => {
+        try {
+          await generateManualFaithful(manual.id, fileBuffer, fileOrigname, fileMimetype, title, tenantId);
+        } catch (err: any) {
+          console.error("[manual-faithful] async error:", err?.message);
+        }
+      });
+
+      res.status(201).json({
+        id:      manual.id,
+        status:  "pending",
+        title,
+        message: "Faithful manual generation started",
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
 // POST /api/manuals/upload-video — upload video, transcribe with Whisper, generate SOP
 router.post(
   "/upload-video",
@@ -333,6 +396,58 @@ router.post(
   },
 );
 
+// GET /api/manuals/:id/available-images — list all images extracted from the source document
+router.get("/:id/available-images", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const [manual] = await db.select().from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+    res.json({ images: manual.availableImages ?? [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/manuals/:id/sections/:sectionId/images — update images for a single section
+router.patch("/:id/sections/:sectionId/images", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { images } = req.body;
+
+    if (!Array.isArray(images))
+      return res.status(400).json({ error: "images must be an array" });
+
+    const [manual] = await db.select().from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const [section] = await db
+      .select()
+      .from(manualSections)
+      .where(and(eq(manualSections.id, req.params.sectionId), eq(manualSections.manualId, req.params.id)))
+      .limit(1);
+    if (!section) return res.status(404).json({ error: "Section not found" });
+
+    await db.update(manualSections)
+      .set({ images: images as any, updatedAt: new Date() })
+      .where(eq(manualSections.id, req.params.sectionId));
+
+    if (manual.ragIndexed) {
+      const { indexManual } = await import("../services/manual-indexer.service.js");
+      indexManual(req.params.id).catch((e: any) =>
+        console.warn("[manual] re-index after image edit failed:", e?.message)
+      );
+    }
+
+    res.json({ id: req.params.sectionId, images });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/manuals/:id
 router.delete("/:id", authenticate, async (req: Request, res: Response) => {
   try {
@@ -349,6 +464,10 @@ router.delete("/:id", authenticate, async (req: Request, res: Response) => {
     )
       return res.status(403).json({ error: "Forbidden" });
 
+    // Clean Qdrant vectors + MinIO images before deleting from postgres
+    await cleanupManual(req.params.id, manual.tenantId).catch((e: any) =>
+      console.warn("[manual] cleanup on delete failed:", e?.message)
+    );
     await db.delete(manuals).where(eq(manuals.id, req.params.id));
     res.json({ deleted: true });
   } catch (err: any) {

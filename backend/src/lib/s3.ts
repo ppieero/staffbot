@@ -2,6 +2,8 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 
 // Lazy singleton — created on first use so dotenv.config() runs first
@@ -58,4 +60,18 @@ export async function deleteFile(key: string): Promise<void> {
   await getS3().send(
     new DeleteObjectCommand({ Bucket: bucket(), Key: key })
   );
+}
+
+/** Delete all objects under a prefix (folder) from S3/MinIO. Returns count deleted. */
+export async function deleteFolder(prefix: string): Promise<number> {
+  const listed = await getS3().send(
+    new ListObjectsV2Command({ Bucket: bucket(), Prefix: prefix })
+  );
+  const objects = listed.Contents ?? [];
+  if (!objects.length) return 0;
+  await getS3().send(new DeleteObjectsCommand({
+    Bucket: bucket(),
+    Delete: { Objects: objects.map(o => ({ Key: o.Key! })) },
+  }));
+  return objects.length;
 }

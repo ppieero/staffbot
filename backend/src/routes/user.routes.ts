@@ -165,4 +165,19 @@ router.get("/audit-logs", async (req: Request, res: Response): Promise<void> => 
   }
 });
 
+// POST /api/users/admin/cleanup — manual trigger for orphan cleanup (super_admin only)
+router.post("/admin/cleanup", async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (req.user!.role !== "super_admin") {
+      res.status(403).json({ error: "Super admin only" });
+      return;
+    }
+    const { runDailyCleanup } = await import("../jobs/cleanup.job.js");
+    const result = await runDailyCleanup();
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

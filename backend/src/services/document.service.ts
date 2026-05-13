@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
 import { documents, positionProfiles } from "../db/schema";
 import { uploadFile, deleteFile } from "../lib/s3";
-import { documentIndexQueue, documentDeleteQueue } from "../lib/queue";
+import { documentIndexQueue } from "../lib/queue";
+import { cleanupDocument } from "../lib/storage-cleanup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,17 +142,12 @@ export async function deleteDocument(tenantId: string | null, id: string) {
   const doc = await getDocumentById(tenantId, id);
   if (!doc) return null;
 
-  // Delete from S3
-  await deleteFile(s3Key(doc));
+  // Delete original file from S3 and clean Qdrant vectors + extracted images
+  await Promise.allSettled([
+    deleteFile(s3Key(doc)),
+    cleanupDocument(id, doc.tenantId),
+  ]);
 
-  // Queue vector deletion (RAG engine will remove from Qdrant)
-  await documentDeleteQueue.add("delete", {
-    documentId: id,
-    tenantId,
-    vectorIds: [], // RAG engine queries by document_id payload filter
-  });
-
-  // Delete from DB (use the resolved doc.tenantId so the WHERE clause is always correct)
   const [deleted] = await db
     .delete(documents)
     .where(and(eq(documents.id, id), eq(documents.tenantId, doc.tenantId)))
