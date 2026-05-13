@@ -4,6 +4,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { useTranslation } from "@/lib/i18n";
 
+interface SectionImage { url: string; page?: number | null; index?: number; ext?: string | null }
+
+interface ManualSectionFull {
+  id: string;
+  title: string;
+  orderIndex: number;
+  sectionType: string;
+  images: SectionImage[];
+}
+
 const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
   published:    { bg: "rgba(74,222,128,0.1)",  color: "#4ade80", label: "Published" },
   generating:   { bg: "rgba(251,191,36,0.1)",  color: "#fbbf24", label: "Generating…" },
@@ -57,6 +67,7 @@ interface Manual {
   profileIds:     string[];
   ragIndexed:     boolean;
   ragChunks:      number;
+  indexImages:    boolean;
   createdAt:      string;
 }
 
@@ -72,6 +83,7 @@ export default function ManualesPage() {
   const [uploadType, setUploadType] = useState<"doc" | "video">("doc");
   const [uploadTitle, setUploadTitle]       = useState("");
   const [uploadLanguage, setUploadLanguage] = useState("auto");
+  const [docMode, setDocMode]               = useState<"auto" | "faithful">("auto");
 
   const showToast = (msg: string, ok = false) => {
     setToast({ msg, ok });
@@ -91,20 +103,26 @@ export default function ManualesPage() {
   const handleDocUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     const file = fileInputRef.current?.files?.[0];
-    if (!file) return showToast("Please select a PDF or DOCX file");
+    if (!file) return showToast(docMode === "faithful" ? "Please select a PDF or PPTX file" : "Please select a PDF or DOCX file");
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("title", uploadTitle.trim() || file.name.replace(/\.[^/.]+$/, ""));
-      fd.append("language", uploadLanguage);
-      await api.post("/manuals/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      if (docMode === "auto") fd.append("language", uploadLanguage);
+      const endpoint = docMode === "faithful" ? "/manuals/upload-faithful" : "/manuals/upload";
+      await api.post(endpoint, fd, { headers: { "Content-Type": "multipart/form-data" } });
       qc.invalidateQueries({ queryKey: ["manuals"] });
       setShowUpload(false);
       setUploadTitle("");
       setUploadLanguage("auto");
       if (fileInputRef.current) fileInputRef.current.value = "";
-      showToast("Document uploaded — manual generation started (1-2 min)", true);
+      showToast(
+        docMode === "faithful"
+          ? "Document uploaded — generating faithful manual (1-2 min)"
+          : "Document uploaded — manual generation started (1-2 min)",
+        true,
+      );
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
       showToast(msg || "Upload failed");
@@ -144,6 +162,66 @@ export default function ManualesPage() {
   const [editingProfiles, setEditingProfiles] = useState<string | null>(null);
   const [profileSelection, setProfileSelection] = useState<string[]>([]);
 
+  // Image editor state
+  const [editingImages, setEditingImages]           = useState<string | null>(null); // manualId
+  const [imgEditorSections, setImgEditorSections]   = useState<ManualSectionFull[]>([]);
+  const [imgEditorAvailable, setImgEditorAvailable] = useState<SectionImage[]>([]);
+  const [imgEditorActive, setImgEditorActive]       = useState<number>(0);
+  const [imgEditorLoading, setImgEditorLoading]     = useState(false);
+  const [imgEditorSaving, setImgEditorSaving]       = useState(false);
+
+  const openImageEditor = async (manualId: string) => {
+    setImgEditorLoading(true);
+    setEditingImages(manualId);
+    setImgEditorActive(0);
+    try {
+      const [manualRes, availRes] = await Promise.all([
+        api.get(`/manuals/${manualId}`),
+        api.get(`/manuals/${manualId}/available-images`),
+      ]);
+      const sections = (manualRes.data.sections ?? []) as ManualSectionFull[];
+      setImgEditorSections(sections.map(s => ({ ...s, images: Array.isArray(s.images) ? s.images : [] })));
+      setImgEditorAvailable((availRes.data.images ?? []) as SectionImage[]);
+    } catch {
+      showToast(t("manuals.imgEdit.errorLoad"));
+      setEditingImages(null);
+    } finally {
+      setImgEditorLoading(false);
+    }
+  };
+
+  const removeImageFromSection = (sectionIdx: number, imgIdx: number) => {
+    setImgEditorSections(prev => prev.map((s, i) =>
+      i === sectionIdx ? { ...s, images: s.images.filter((_, j) => j !== imgIdx) } : s
+    ));
+  };
+
+  const addImageToSection = (sectionIdx: number, img: SectionImage) => {
+    setImgEditorSections(prev => prev.map((s, i) => {
+      if (i !== sectionIdx) return s;
+      const alreadyExists = s.images.some(x => x.url === img.url);
+      if (alreadyExists || s.images.length >= 3) return s;
+      return { ...s, images: [...s.images, img] };
+    }));
+  };
+
+  const saveImageEdits = async (manualId: string) => {
+    setImgEditorSaving(true);
+    try {
+      await Promise.all(
+        imgEditorSections.map(s =>
+          api.patch(`/manuals/${manualId}/sections/${s.id}/images`, { images: s.images })
+        )
+      );
+      showToast(t("manuals.imgEdit.saved"), true);
+      setEditingImages(null);
+    } catch {
+      showToast(t("manuals.imgEdit.errorSave"));
+    } finally {
+      setImgEditorSaving(false);
+    }
+  };
+
   const { data: profilesData } = useQuery({
     queryKey: ["profiles"],
     queryFn:  () => api.get("/profiles?limit=100").then(r => r.data),
@@ -182,6 +260,20 @@ export default function ManualesPage() {
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
       showToast(msg || "Index operation failed");
+    }
+  };
+
+  const handleToggleImages = async (m: Manual) => {
+    try {
+      await api.patch(`/manuals/${m.id}/index-images`, { indexImages: !m.indexImages });
+      qc.invalidateQueries({ queryKey: ["manuals"] });
+      showToast(
+        !m.indexImages ? "Images enabled — re-indexing sections" : "Images disabled — images removed from sections",
+        true,
+      );
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      showToast(msg || "Failed to update image setting");
     }
   };
 
@@ -279,13 +371,33 @@ export default function ManualesPage() {
                   </div>
                 )}
                 {/* RAG status */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.375rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.375rem", flexWrap: "wrap" }}>
                   <span style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 99, border: `1px solid ${m.ragIndexed ? "rgba(74,222,128,0.3)" : "rgba(148,163,184,0.3)"}`, background: m.ragIndexed ? "rgba(74,222,128,0.1)" : "transparent", color: m.ragIndexed ? "#4ade80" : "var(--text-muted)", fontWeight: 600 }}>
                     {m.ragIndexed ? `🧠 RAG — ${m.ragChunks} sections` : "🧠 Not indexed"}
                   </span>
                   <button onClick={() => handleToggleIndex(m)} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
                     {m.ragIndexed ? "Remove" : "Index into RAG"}
                   </button>
+                  {m.sourceType !== "video" && (
+                    <>
+                      <button
+                        onClick={() => handleToggleImages(m)}
+                        title={m.indexImages !== false ? "Images indexed — click to disable" : "Images disabled — click to enable"}
+                        style={{
+                          fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6,
+                          border: `1px solid ${m.indexImages !== false ? "rgba(74,222,128,0.3)" : "var(--border)"}`,
+                          background: m.indexImages !== false ? "rgba(74,222,128,0.08)" : "transparent",
+                          color: m.indexImages !== false ? "#4ade80" : "var(--text-muted)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        🖼 {m.indexImages !== false ? "ON" : "OFF"}
+                      </button>
+                      <button onClick={() => openImageEditor(m.id)} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6, border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.06)", color: "var(--accent)", cursor: "pointer" }}>
+                        {t("manuals.imgEdit.btn")}
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -345,10 +457,54 @@ export default function ManualesPage() {
       {showUpload && (
         <div style={{ ...card, marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "1rem" }}>
-            {uploadType === "video" ? "🎬 Upload video to generate SOP" : "📄 Upload document to generate manual"}
+            {uploadType === "video" ? "🎬 Upload video to generate SOP" : "📄 Create manual from document"}
           </h2>
           <form onSubmit={uploadType === "video" ? handleVideoUpload : handleDocUpload}>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+
+              {/* Mode selector — only for docs */}
+              {uploadType === "doc" && (
+                <div>
+                  <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 6 }}>
+                    Generation mode
+                  </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                    <div
+                      onClick={() => setDocMode("auto")}
+                      style={{
+                        padding: "0.75rem", borderRadius: 9, cursor: "pointer",
+                        border: `1.5px solid ${docMode === "auto" ? "var(--accent)" : "var(--border)"}`,
+                        background: docMode === "auto" ? "rgba(99,102,241,0.08)" : "transparent",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <div style={{ fontSize: "0.875rem", fontWeight: 700, color: docMode === "auto" ? "var(--accent)" : "var(--text-primary)", marginBottom: 3 }}>
+                        🤖 AI Auto
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
+                        Claude rewrites and structures the content into sections
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setDocMode("faithful")}
+                      style={{
+                        padding: "0.75rem", borderRadius: 9, cursor: "pointer",
+                        border: `1.5px solid ${docMode === "faithful" ? "var(--accent)" : "var(--border)"}`,
+                        background: docMode === "faithful" ? "rgba(99,102,241,0.08)" : "transparent",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <div style={{ fontSize: "0.875rem", fontWeight: 700, color: docMode === "faithful" ? "var(--accent)" : "var(--text-primary)", marginBottom: 3 }}>
+                        📋 Fiel al PDF/PPT
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
+                        Each page/slide becomes one section, no rewriting
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   Title (optional)
@@ -360,54 +516,62 @@ export default function ManualesPage() {
                   style={{ width: "100%", padding: "0.5rem 0.75rem", background: "var(--bg-main)", border: "1px solid var(--border)", borderRadius: 7, color: "var(--text-primary)", fontSize: "0.875rem", outline: "none", boxSizing: "border-box" }}
                 />
               </div>
-              {/* Language selector */}
-              <div>
-                <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 6 }}>
-                  Output language
-                </label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                  {([
-                    { value: "auto", label: "🔍 Auto-detect" },
-                    { value: "en",   label: "🇬🇧 English" },
-                    { value: "es",   label: "🇪🇸 Spanish" },
-                    { value: "fr",   label: "🇫🇷 French" },
-                    { value: "pt",   label: "🇵🇹 Portuguese" },
-                    { value: "de",   label: "🇩🇪 German" },
-                  ] as const).map(lang => (
-                    <div
-                      key={lang.value}
-                      onClick={() => setUploadLanguage(lang.value)}
-                      style={{
-                        padding: "0.5rem 0.75rem", borderRadius: 8, cursor: "pointer",
-                        border: `1.5px solid ${uploadLanguage === lang.value ? "var(--accent)" : "var(--border)"}`,
-                        background: uploadLanguage === lang.value ? "rgba(99,102,241,0.08)" : "transparent",
-                        fontSize: "0.8125rem", fontWeight: uploadLanguage === lang.value ? 600 : 400,
-                        color: uploadLanguage === lang.value ? "var(--accent)" : "var(--text-secondary)",
-                        transition: "all 0.15s",
-                      }}
-                    >
-                      {lang.label}
-                    </div>
-                  ))}
+
+              {/* Language selector — only for AI Auto mode */}
+              {(uploadType === "video" || docMode === "auto") && (
+                <div>
+                  <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 6 }}>
+                    Output language
+                  </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                    {([
+                      { value: "auto", label: "🔍 Auto-detect" },
+                      { value: "en",   label: "🇬🇧 English" },
+                      { value: "es",   label: "🇪🇸 Spanish" },
+                      { value: "fr",   label: "🇫🇷 French" },
+                      { value: "pt",   label: "🇵🇹 Portuguese" },
+                      { value: "de",   label: "🇩🇪 German" },
+                    ] as const).map(lang => (
+                      <div
+                        key={lang.value}
+                        onClick={() => setUploadLanguage(lang.value)}
+                        style={{
+                          padding: "0.5rem 0.75rem", borderRadius: 8, cursor: "pointer",
+                          border: `1.5px solid ${uploadLanguage === lang.value ? "var(--accent)" : "var(--border)"}`,
+                          background: uploadLanguage === lang.value ? "rgba(99,102,241,0.08)" : "transparent",
+                          fontSize: "0.8125rem", fontWeight: uploadLanguage === lang.value ? 600 : 400,
+                          color: uploadLanguage === lang.value ? "var(--accent)" : "var(--text-secondary)",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        {lang.label}
+                      </div>
+                    ))}
+                  </div>
+                  {uploadLanguage !== "auto" && (
+                    <p style={{ fontSize: "0.6875rem", color: "var(--text-muted)", marginTop: 5 }}>
+                      Staffbot will generate the entire manual in the selected language, translating the source if needed.
+                    </p>
+                  )}
                 </div>
-                {uploadLanguage !== "auto" && (
-                  <p style={{ fontSize: "0.6875rem", color: "var(--text-muted)", marginTop: 5 }}>
-                    Staffbot will generate the entire manual in the selected language, translating the source if needed.
-                  </p>
-                )}
-              </div>
+              )}
 
               <div>
                 <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   {uploadType === "video"
                     ? "Video file (MP4, MOV, WebM — max 24MB for transcription)"
-                    : "PDF or DOCX file"}
+                    : docMode === "faithful"
+                      ? "PDF, PPTX, PPT or ODP file"
+                      : "PDF or DOCX file"}
                 </label>
                 {uploadType === "video"
                   ? <input ref={videoInputRef} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-msvideo,audio/mpeg,audio/mp4,audio/wav" style={{ fontSize: "0.875rem", color: "var(--text-primary)" }} />
-                  : <input ref={fileInputRef} type="file" accept=".pdf,.docx" style={{ fontSize: "0.875rem", color: "var(--text-primary)" }} />
+                  : docMode === "faithful"
+                    ? <input ref={fileInputRef} type="file" accept=".pdf,.pptx,.ppt,.odp" style={{ fontSize: "0.875rem", color: "var(--text-primary)" }} />
+                    : <input ref={fileInputRef} type="file" accept=".pdf,.docx" style={{ fontSize: "0.875rem", color: "var(--text-primary)" }} />
                 }
               </div>
+
               <div style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)", borderRadius: 8, padding: "0.75rem" }}>
                 {uploadType === "video" ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
@@ -420,16 +584,28 @@ export default function ManualesPage() {
                       <p key={s} style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", margin: 0 }}>{s}</p>
                     ))}
                   </div>
+                ) : docMode === "faithful" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                    {[
+                      "1. Each page (PDF) or slide (PPTX/ODP) becomes one section",
+                      "2. Images are captured and shown exactly as in the original",
+                      "3. No AI rewriting — content is preserved as-is",
+                      "4. Published as a mobile-friendly web manual",
+                    ].map(s => (
+                      <p key={s} style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", margin: 0 }}>{s}</p>
+                    ))}
+                  </div>
                 ) : (
                   <p style={{ fontSize: "0.8125rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>
                     Staffbot will analyze the document and generate a structured web manual with sections, numbered steps, checklists and notes. Takes 1-2 minutes.
                   </p>
                 )}
               </div>
+
               <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
                 <button
                   type="button"
-                  onClick={() => { setShowUpload(false); setUploadTitle(""); setUploadLanguage("auto"); }}
+                  onClick={() => { setShowUpload(false); setUploadTitle(""); setUploadLanguage("auto"); setDocMode("auto"); }}
                   style={{ padding: "0.5rem 1rem", background: "transparent", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: "0.875rem", cursor: "pointer" }}
                 >
                   Cancel
@@ -440,8 +616,12 @@ export default function ManualesPage() {
                   style={{ padding: "0.5rem 1.25rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: uploading ? "not-allowed" : "pointer", opacity: uploading ? 0.7 : 1 }}
                 >
                   {uploading
-                    ? (uploadType === "video" ? "Uploading…" : "Uploading…")
-                    : (uploadType === "video" ? "Upload & transcribe" : "Generate manual")}
+                    ? "Uploading…"
+                    : uploadType === "video"
+                      ? "Upload & transcribe"
+                      : docMode === "faithful"
+                        ? "Create faithful manual"
+                        : "Generate manual"}
                 </button>
               </div>
             </div>
@@ -499,6 +679,96 @@ export default function ManualesPage() {
           ) : (
             videoManuals.map(m => <ManualCard key={m.id} m={m} />)
           )}
+        </div>
+      )}
+
+      {/* ── Image editor modal ─────────────────────────────────── */}
+      {editingImages && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setEditingImages(null)}>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 14, padding: "1.5rem", width: 620, maxWidth: "95vw", maxHeight: "90vh", display: "flex", flexDirection: "column", gap: "1rem" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>🖼 {t("manuals.imgEdit.title")}</h2>
+              <button onClick={() => setEditingImages(null)} style={{ background: "transparent", border: "none", fontSize: "1.25rem", color: "var(--text-muted)", cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+
+            {imgEditorLoading ? (
+              <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)" }}>{t("manuals.imgEdit.loading")}</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", overflow: "hidden" }}>
+                {/* Section tabs */}
+                <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderBottom: "1px solid var(--border)", paddingBottom: "0.5rem" }}>
+                  <div style={{ display: "flex", gap: "0.375rem", minWidth: "max-content" }}>
+                    {imgEditorSections.map((s, i) => (
+                      <button key={s.id} onClick={() => setImgEditorActive(i)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${imgEditorActive === i ? "var(--accent)" : "var(--border)"}`, background: imgEditorActive === i ? "rgba(99,102,241,0.1)" : "transparent", color: imgEditorActive === i ? "var(--accent)" : "var(--text-muted)", fontSize: "0.75rem", fontWeight: imgEditorActive === i ? 600 : 400, cursor: "pointer", whiteSpace: "nowrap" }}>
+                        {i + 1}. {s.title.length > 18 ? s.title.slice(0, 18) + "…" : s.title}
+                        {s.images.length > 0 && <span style={{ marginLeft: 4, opacity: 0.6 }}>({s.images.length})</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {imgEditorSections[imgEditorActive] && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem", overflowY: "auto", maxHeight: "55vh" }}>
+                    {/* Current images for this section */}
+                    <div>
+                      <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                        {t("manuals.imgEdit.currentLabel")} ({imgEditorSections[imgEditorActive].images.length}/3)
+                      </p>
+                      {imgEditorSections[imgEditorActive].images.length === 0 ? (
+                        <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", fontStyle: "italic" }}>{t("manuals.imgEdit.noImages")}</p>
+                      ) : (
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                          {imgEditorSections[imgEditorActive].images.map((img, j) => (
+                            <div key={j} style={{ position: "relative", width: 110, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+                              <img src={img.url} alt="" style={{ width: "100%", height: 80, objectFit: "cover", display: "block", background: "#f5f5f5" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                              {img.page && <div style={{ fontSize: 9, color: "var(--text-muted)", padding: "2px 6px", background: "var(--bg-main)", borderTop: "1px solid var(--border)" }}>{t("manuals.imgEdit.page")} {img.page}</div>}
+                              <button onClick={() => removeImageFromSection(imgEditorActive, j)} style={{ position: "absolute", top: 3, right: 3, width: 20, height: 20, borderRadius: "50%", border: "none", background: "rgba(248,113,113,0.9)", color: "#fff", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Available images picker */}
+                    {imgEditorAvailable.length > 0 && (
+                      <div>
+                        <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                          {t("manuals.imgEdit.availableHint")}
+                        </p>
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                          {imgEditorAvailable.map((img, j) => {
+                            const currentSec = imgEditorSections[imgEditorActive];
+                            const isAdded = currentSec.images.some(x => x.url === img.url);
+                            const isFull  = currentSec.images.length >= 3;
+                            return (
+                              <div key={j} onClick={() => !isAdded && !isFull && addImageToSection(imgEditorActive, img)} style={{ position: "relative", width: 110, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${isAdded ? "var(--accent)" : "var(--border)"}`, cursor: isAdded || isFull ? "default" : "pointer", opacity: isFull && !isAdded ? 0.4 : 1, transition: "border-color 0.15s" }}>
+                                <img src={img.url} alt="" style={{ width: "100%", height: 80, objectFit: "cover", display: "block", background: "#f5f5f5" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                                {img.page && <div style={{ fontSize: 9, color: "var(--text-muted)", padding: "2px 6px", background: "var(--bg-main)", borderTop: "1px solid var(--border)" }}>{t("manuals.imgEdit.page")} {img.page}</div>}
+                                {isAdded && <div style={{ position: "absolute", top: 3, left: 3, background: "var(--accent)", borderRadius: 4, padding: "1px 5px", fontSize: 9, color: "#fff", fontWeight: 700 }}>✓ {t("manuals.imgEdit.added")}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {imgEditorAvailable.length === 0 && (
+                      <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", fontStyle: "italic" }}>
+                        {t("manuals.imgEdit.noAvailable")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", paddingTop: "0.5rem", borderTop: "1px solid var(--border)" }}>
+              <button onClick={() => setEditingImages(null)} style={{ padding: "0.5rem 1rem", background: "transparent", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: "0.875rem", cursor: "pointer" }}>{t("manuals.imgEdit.cancel")}</button>
+              <button onClick={() => saveImageEdits(editingImages)} disabled={imgEditorSaving || imgEditorLoading} style={{ padding: "0.5rem 1.25rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: imgEditorSaving ? "not-allowed" : "pointer", opacity: imgEditorSaving ? 0.7 : 1 }}>
+                {imgEditorSaving ? t("manuals.imgEdit.saving") : t("manuals.imgEdit.save")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

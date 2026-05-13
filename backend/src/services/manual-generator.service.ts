@@ -93,6 +93,12 @@ async function saveSections(
 ): Promise<void> {
   await db.delete(manualSections).where(eq(manualSections.manualId, manualId));
 
+  if (extractedImages.length > 0) {
+    await db.update(manuals)
+      .set({ availableImages: extractedImages.map(img => ({ url: img.url, page: img.page ?? null, index: img.index, ext: img.ext ?? null })) as any })
+      .where(eq(manuals.id, manualId));
+  }
+
   const MAX_IMAGES_PER_SECTION = 3;
 
   for (let i = 0; i < generated.sections.length; i++) {
@@ -276,6 +282,97 @@ IMPORTANT:
     await saveSections(manualId, generated, []);
   } catch (err: any) {
     console.error("[manual] video generation error:", err?.message);
+    await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));
+    throw err;
+  }
+}
+
+export async function generateManualFaithful(
+  manualId:     string,
+  fileBuffer:   Buffer,
+  fileOrigname: string,
+  fileMimetype: string,
+  title:        string,
+  tenantId:     string,
+): Promise<void> {
+  await db.update(manuals)
+    .set({ status: "generating", updatedAt: new Date() })
+    .where(eq(manuals.id, manualId));
+
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([fileBuffer], { type: fileMimetype }), fileOrigname);
+    form.append("tenant_id",   tenantId);
+    form.append("document_id", manualId);
+
+    const ragRes = await fetch(
+      `${process.env.RAG_ENGINE_URL ?? "http://localhost:8000"}/extract-pages`,
+      { method: "POST", body: form },
+    );
+
+    if (!ragRes.ok) {
+      const errBody = await ragRes.text().catch(() => "");
+      throw new Error(`RAG extract-pages ${ragRes.status}: ${errBody.slice(0, 300)}`);
+    }
+
+    type SlideEntry = { page: number; title: string; text: string; notes: string; image_url: string | null; source_format: string };
+    const data   = await ragRes.json() as { slides: SlideEntry[] };
+    const slides = data.slides ?? [];
+
+    if (slides.length === 0) throw new Error("No slides/pages extracted from document");
+
+    await db.delete(manualSections).where(eq(manualSections.manualId, manualId));
+
+    const availableImages = slides
+      .filter(s => s.image_url)
+      .map((s, i) => ({ url: s.image_url!, page: s.page, index: i }));
+
+    if (availableImages.length > 0) {
+      await db.update(manuals)
+        .set({ availableImages: availableImages as any })
+        .where(eq(manuals.id, manualId));
+    }
+
+    for (let i = 0; i < slides.length; i++) {
+      const s = slides[i];
+
+      let contentHtml = s.text
+        ? `<p class="sb-section-body">${s.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`
+        : "";
+      if (s.notes?.trim()) {
+        const safeNotes = s.notes.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        contentHtml += `<div class="sb-note"><span class="sb-note-label">Notes</span><p>${safeNotes}</p></div>`;
+      }
+
+      const images = s.image_url ? [{ url: s.image_url, page: s.page }] : [];
+
+      await db.insert(manualSections).values({
+        manualId,
+        orderIndex:  i,
+        title:       s.title || `Page ${s.page}`,
+        contentHtml,
+        sectionType: "slide",
+        images:      images as any,
+      });
+    }
+
+    await db.update(manuals).set({
+      status:      "published",
+      title,
+      generatedAt: new Date(),
+      updatedAt:   new Date(),
+    }).where(eq(manuals.id, manualId));
+
+    console.log(`[manual-faithful] Saved ${slides.length} slide sections for ${manualId}`);
+
+    try {
+      const { chunks } = await indexManual(manualId);
+      console.log(`[manual-faithful] RAG indexed ${chunks} sections for ${manualId}`);
+    } catch (err: any) {
+      console.warn("[manual-faithful] RAG indexing failed (manual still published):", err?.message);
+    }
+  } catch (err: any) {
+    console.error("[manual-faithful] error:", err?.message);
     await db.update(manuals).set({ status: "error", updatedAt: new Date() }).where(eq(manuals.id, manualId));
     throw err;
   }

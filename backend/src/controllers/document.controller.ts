@@ -115,6 +115,18 @@ export async function deleteDocument(req: Request, res: Response): Promise<void>
   res.json({ data: result, meta: { message: "Document deleted and vector removal queued" } });
 }
 
+// PATCH /api/documents/:id/index-images
+export async function patchIndexImages(req: Request, res: Response): Promise<void> {
+  const { indexImages } = req.body as { indexImages?: unknown };
+  if (typeof indexImages !== "boolean") {
+    res.status(400).json({ error: "indexImages must be boolean" });
+    return;
+  }
+  const result = await svc.patchIndexImages(tenantId(req), req.params.id, indexImages);
+  if (!result) { res.status(404).json({ error: "Document not found" }); return; }
+  res.json({ data: result });
+}
+
 // POST /api/documents/reindex-all
 export async function reindexAllDocuments(req: Request, res: Response): Promise<void> {
   const user = req.user!;

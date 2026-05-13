@@ -13,6 +13,7 @@ export interface DocumentIndexJob {
   profileId: string;
   fileUrl: string;
   fileType: string;
+  indexImages?: boolean;
 }
 
 export interface DocumentDeleteJob {
@@ -34,5 +35,19 @@ export const documentIndexQueue = new Queue<DocumentIndexJob, void, IndexJobName
 
 export const documentDeleteQueue = new Queue<DocumentDeleteJob, void, DeleteJobName>(
   "document-delete",
+  { connection }
+);
+
+// ─── Notion Sync ──────────────────────────────────────────────────────────────
+
+export interface NotionSyncJob {
+  notionResourceId: string;
+  tenantId: string;
+}
+
+export type NotionSyncJobName = "sync-resource";
+
+export const notionSyncQueue = new Queue<NotionSyncJob, void, NotionSyncJobName>(
+  "notion-sync",
   { connection }
 );

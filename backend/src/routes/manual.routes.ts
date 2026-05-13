@@ -550,4 +550,49 @@ router.delete("/:id/index", authenticate, async (req: Request, res: Response) =>
   }
 });
 
+// PATCH /api/manuals/:id/index-images — toggle image indexing
+router.patch("/:id/index-images", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { indexImages } = req.body as { indexImages?: unknown };
+
+    if (typeof indexImages !== "boolean")
+      return res.status(400).json({ error: "indexImages must be boolean" });
+
+    const [manual] = await db
+      .select({ id: manuals.id, tenantId: manuals.tenantId, status: manuals.status })
+      .from(manuals)
+      .where(eq(manuals.id, req.params.id))
+      .limit(1);
+
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if ((user as any).role !== "super_admin" && manual.tenantId !== (user as any).tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    await db.update(manuals)
+      .set({ indexImages, updatedAt: new Date() })
+      .where(eq(manuals.id, manual.id));
+
+    if (!indexImages) {
+      const { deleteImagesFromMinIO } = await import("../lib/storage-cleanup.js");
+      await deleteImagesFromMinIO(manual.tenantId, manual.id).catch((e: any) =>
+        console.warn("[manual] MinIO delete failed:", e?.message)
+      );
+      await db.update(manualSections)
+        .set({ images: [] as any })
+        .where(eq(manualSections.manualId, manual.id));
+    }
+
+    if (manual.status === "published") {
+      indexManual(manual.id).catch((e: any) =>
+        console.warn("[manual] Re-index after image toggle failed:", e?.message)
+      );
+    }
+
+    res.json({ data: { id: manual.id, indexImages } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

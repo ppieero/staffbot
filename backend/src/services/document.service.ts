@@ -82,10 +82,9 @@ export async function uploadDocument(
     })
     .returning();
 
-  // Publish indexing job with 3 retries + exponential backoff
   await documentIndexQueue.add(
     "index",
-    { documentId, tenantId, profileId, fileUrl, fileType },
+    { documentId, tenantId, profileId, fileUrl, fileType, indexImages: true },
     { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
   );
 
@@ -247,14 +246,52 @@ export async function reindexDocument(tenantId: string | null, id: string) {
     {
       documentId: id,
       tenantId,
-      profileId: doc.profileId,
-      fileUrl: doc.fileUrl,
-      fileType: doc.fileType,
+      profileId:   doc.profileId,
+      fileUrl:     doc.fileUrl,
+      fileType:    doc.fileType,
+      indexImages: doc.indexImages ?? true,
     },
     { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
   );
 
   return doc;
+}
+
+export async function patchIndexImages(
+  tenantId: string | null,
+  id: string,
+  indexImages: boolean,
+): Promise<{ id: string; indexImages: boolean } | null> {
+  const doc = await getDocumentById(tenantId, id);
+  if (!doc) return null;
+
+  await db.update(documents).set({ indexImages, updatedAt: new Date() }).where(eq(documents.id, id));
+
+  if (!indexImages) {
+    const { deleteImagesFromMinIO } = await import("../lib/storage-cleanup.js");
+    await deleteImagesFromMinIO(doc.tenantId, id).catch((e: any) =>
+      console.warn("[doc] MinIO image delete failed:", e?.message)
+    );
+  }
+
+  if (doc.indexingStatus === "indexed") {
+    await updateIndexingStatus(id, "pending");
+    await documentIndexQueue.add(
+      "index",
+      {
+        documentId: id,
+        tenantId:   doc.tenantId,
+        profileId:  doc.profileId,
+        fileUrl:    doc.fileUrl,
+        fileType:   doc.fileType,
+        indexImages,
+      },
+      { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
+    );
+    console.log(`[doc] Re-index queued for ${id} after index_images → ${indexImages}`);
+  }
+
+  return { id, indexImages };
 }
 
 export async function updateProfileAssignment(

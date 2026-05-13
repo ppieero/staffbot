@@ -63,6 +63,24 @@ export const employeeStatusEnum = pgEnum("employee_status", [
 
 export const channelEnum = pgEnum("channel", ["whatsapp", "telegram"]);
 
+export const notionSyncStatusEnum = pgEnum("notion_sync_status", [
+  "pending",
+  "syncing",
+  "synced",
+  "error",
+]);
+
+export const notionObjectTypeEnum = pgEnum("notion_object_type", [
+  "database",
+  "page",
+]);
+
+export const notionResourceCategoryEnum = pgEnum("notion_resource_category", [
+  "agenda",
+  "document",
+  "custom",
+]);
+
 export const conversationStatusEnum = pgEnum("conversation_status", [
   "open",
   "closed",
@@ -163,6 +181,7 @@ export const documents = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
     profileId: uuid("profile_id").notNull().references(() => positionProfiles.id, { onDelete: "cascade" }),
+    indexImages: boolean("index_images").notNull().default(true),
     profileIds: uuid("profile_ids").array().default(sql`'{}'::uuid[]`),
     name: varchar("name", { length: 255 }).notNull(),
     fileName: varchar("file_name", { length: 500 }).notNull(),
@@ -287,6 +306,8 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
   employees: many(employees),
   conversations: many(conversations),
   auditLogs: many(auditLogs),
+  notionConnections: many(notionConnections),
+  notionResources: many(notionResources),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -299,6 +320,7 @@ export const positionProfilesRelations = relations(positionProfiles, ({ one, man
   tenant: one(tenants, { fields: [positionProfiles.tenantId], references: [tenants.id] }),
   documents: many(documents),
   employees: many(employees),
+  notionResourceProfiles: many(notionResourceProfiles),
 }));
 
 export const documentsRelations = relations(documents, ({ one }) => ({
@@ -362,6 +384,66 @@ export const pricingConfig = pgTable("pricing_config", {
   updatedAt:        timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const notionConnections = pgTable(
+  "notion_connections",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    // Encrypted with AES-256 using NOTION_ENCRYPTION_KEY
+    accessToken: text("access_token").notNull(),
+    workspaceId: varchar("workspace_id", { length: 255 }).notNull(),
+    workspaceName: varchar("workspace_name", { length: 255 }).notNull(),
+    workspaceIcon: text("workspace_icon"),
+    botId: varchar("bot_id", { length: 255 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: uniqueIndex("notion_connections_tenant_idx").on(t.tenantId),
+  })
+);
+
+export const notionResources = pgTable(
+  "notion_resources",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").notNull().references(() => notionConnections.id, { onDelete: "cascade" }),
+    notionObjectId: varchar("notion_object_id", { length: 255 }).notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    objectType: notionObjectTypeEnum("object_type").notNull(),
+    resourceCategory: notionResourceCategoryEnum("resource_category").notNull().default("document"),
+    syncStatus: notionSyncStatusEnum("sync_status").notNull().default("pending"),
+    indexImages: boolean("index_images").notNull().default(true),
+    chunkCount: integer("chunk_count").default(0),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: index("notion_resources_tenant_idx").on(t.tenantId),
+    connectionIdx: index("notion_resources_connection_idx").on(t.connectionId),
+    notionObjectIdx: uniqueIndex("notion_resources_object_idx").on(t.tenantId, t.notionObjectId),
+  })
+);
+
+export const notionResourceProfiles = pgTable(
+  "notion_resource_profiles",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    notionResourceId: uuid("notion_resource_id").notNull().references(() => notionResources.id, { onDelete: "cascade" }),
+    profileId: uuid("profile_id").notNull().references(() => positionProfiles.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    resourceIdx: index("nrp_resource_idx").on(t.notionResourceId),
+    profileIdx: index("nrp_profile_idx").on(t.profileId),
+    unique: uniqueIndex("nrp_resource_profile_unique").on(t.notionResourceId, t.profileId),
+  })
+);
+
 export const manuals = pgTable("manuals", {
   id:             uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   tenantId:       uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
@@ -375,11 +457,13 @@ export const manuals = pgTable("manuals", {
   videoUrl:       text("video_url"),
   videoDuration:  integer("video_duration").default(0),
   transcription:  text("transcription"),
+  indexImages:    boolean("index_images").notNull().default(true),
   profileIds:     text("profile_ids").array().default([]),
-  ragIndexed:     boolean("rag_indexed").default(false),
-  ragChunks:      integer("rag_chunks").default(0),
-  tenantSlug:     varchar("tenant_slug", { length: 255 }),
-  generatedAt:    timestamp("generated_at", { withTimezone: true }),
+  ragIndexed:      boolean("rag_indexed").default(false),
+  ragChunks:       integer("rag_chunks").default(0),
+  tenantSlug:      varchar("tenant_slug", { length: 255 }),
+  availableImages: jsonb("available_images").default([]),
+  generatedAt:     timestamp("generated_at", { withTimezone: true }),
   createdAt:      timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:      timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -393,4 +477,21 @@ export const manualSections = pgTable("manual_sections", {
   sectionType: varchar("section_type", { length: 32 }).default("content"),
   images:      jsonb("images").default([]),
   createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const notionConnectionsRelations = relations(notionConnections, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [notionConnections.tenantId], references: [tenants.id] }),
+  resources: many(notionResources),
+}));
+
+export const notionResourcesRelations = relations(notionResources, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [notionResources.tenantId], references: [tenants.id] }),
+  connection: one(notionConnections, { fields: [notionResources.connectionId], references: [notionConnections.id] }),
+  profileAssignments: many(notionResourceProfiles),
+}));
+
+export const notionResourceProfilesRelations = relations(notionResourceProfiles, ({ one }) => ({
+  resource: one(notionResources, { fields: [notionResourceProfiles.notionResourceId], references: [notionResources.id] }),
+  profile: one(positionProfiles, { fields: [notionResourceProfiles.profileId], references: [positionProfiles.id] }),
+}));

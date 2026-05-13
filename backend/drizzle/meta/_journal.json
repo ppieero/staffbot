@@ -15,6 +15,27 @@
       "when": 1777164880837,
       "tag": "0001_jazzy_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778258942669,
+      "tag": "0002_hard_masked_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1746734400000,
+      "tag": "0003_manual_available_images",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778711708711,
+      "tag": "0004_index_images_toggle",
+      "breakpoints": true
     }
   ]
 }

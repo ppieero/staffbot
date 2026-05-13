@@ -21,6 +21,7 @@ interface Doc {
   createdAt: string;
   profileId: string;
   profileIds: string[];
+  indexImages: boolean;
 }
 
 interface Profile {
@@ -196,6 +197,18 @@ export default function DocumentsPage() {
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Update failed";
       showToast(msg);
+    }
+  }, [qc, showToast]);
+
+  // ── Image indexing toggle ──────────────────────────────────────────────────
+
+  const toggleImages = useCallback(async (id: string, current: boolean) => {
+    try {
+      await api.patch(`/documents/${id}/index-images`, { indexImages: !current });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      showToast(!current ? "Images enabled — re-indexing queued" : "Images disabled — re-indexing queued", "ok");
+    } catch {
+      showToast("Failed to update image setting");
     }
   }, [qc, showToast]);
 
@@ -454,7 +467,21 @@ export default function DocumentsPage() {
                             </span>
 
                             {/* Actions */}
-                            <div style={{ display: "flex", gap: "0.25rem", flexShrink: 0 }}>
+                            <div style={{ display: "flex", gap: "0.25rem", flexShrink: 0, alignItems: "center" }}>
+                              {/* Image indexing toggle */}
+                              <button
+                                onClick={() => toggleImages(doc.id, doc.indexImages !== false)}
+                                title={doc.indexImages !== false ? "Images indexed — click to disable" : "Images disabled — click to enable"}
+                                style={{
+                                  padding: "0.2rem 0.5rem", borderRadius: 6, fontSize: "0.6875rem",
+                                  border: `1px solid ${doc.indexImages !== false ? "rgba(74,222,128,0.3)" : "var(--border)"}`,
+                                  background: doc.indexImages !== false ? "rgba(74,222,128,0.08)" : "transparent",
+                                  color: doc.indexImages !== false ? "#4ade80" : "var(--text-muted)",
+                                  cursor: "pointer", transition: "all 0.15s",
+                                }}
+                              >
+                                🖼 {doc.indexImages !== false ? "ON" : "OFF"}
+                              </button>
                               {doc.indexingStatus === "error" && (
                                 <button
                                   onClick={() => reindex(doc.id)}

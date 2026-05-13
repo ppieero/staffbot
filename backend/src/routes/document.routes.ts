@@ -66,6 +66,7 @@ router.delete("/:id", authenticate, requireCompanyAdmin, ctrl.deleteDocument);
 router.post("/:id/reindex", authenticate, requireCompanyAdmin, ctrl.reindexDocument);
 
 router.patch("/:id/profile-assignment", authenticate, requireCompanyAdmin, ctrl.patchProfileAssignment);
+router.patch("/:id/index-images", authenticate, requireCompanyAdmin, ctrl.patchIndexImages);
 
 // Internal route for worker status updates — no JWT, uses worker key instead
 router.patch("/:id/status", requireWorkerKey, ctrl.patchDocumentStatus);

@@ -7,6 +7,7 @@ interface DocumentIndexJob {
   profileId: string;
   fileUrl: string;
   fileType: string;
+  indexImages?: boolean;
 }
 
 const connection = {
@@ -35,21 +36,20 @@ async function updateDocumentStatus(
 }
 
 async function processIndexJob(job: Job<DocumentIndexJob>) {
-  const { documentId, tenantId, profileId, fileUrl, fileType } = job.data;
+  const { documentId, tenantId, profileId, fileUrl, fileType, indexImages } = job.data;
   const { ragUrl } = cfg();
 
   console.log(`[worker] processing document ${documentId} (attempt ${job.attemptsMade + 1})`);
 
-  // Mark as processing
   await updateDocumentStatus(documentId, "processing");
 
-  // Call RAG engine (10-minute timeout for large documents)
   const response = await axios.post(`${ragUrl}/index`, {
-    document_id: documentId,
-    tenant_id: tenantId,
-    profile_id: profileId,
-    file_url: fileUrl,
-    file_type: fileType,
+    document_id:  documentId,
+    tenant_id:    tenantId,
+    profile_id:   profileId,
+    file_url:     fileUrl,
+    file_type:    fileType,
+    index_images: indexImages ?? true,
   }, { timeout: 600_000 });
 
   const { chunk_count } = response.data;

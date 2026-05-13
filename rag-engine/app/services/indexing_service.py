@@ -54,6 +54,7 @@ class DocumentIndexer:
         file_url: str,
         file_type: str,
         embed_provider: EmbedProvider = "openai",
+        index_images: bool = True,
     ) -> int:
         """
         Download, extract, chunk, embed, and upsert a document into Qdrant.
@@ -69,7 +70,7 @@ class DocumentIndexer:
             content = response.content
 
         # 2. Extract text + media (images, video URLs)
-        media      = extract_media(content, file_type, tenant_id, document_id)
+        media      = extract_media(content, file_type, tenant_id, document_id, index_images=index_images)
         text       = media["text"]
         doc_images: List[Dict[str, Any]]  = media["images"]
         doc_videos: List[str]             = media["video_urls"]
@@ -140,6 +141,90 @@ class DocumentIndexer:
                 must=[
                     FieldCondition(key="document_id", match=MatchValue(value=document_id)),
                     FieldCondition(key="tenant_id",   match=MatchValue(value=tenant_id)),
+                ]
+            ),
+        )
+
+    async def process_text(
+        self,
+        tenant_id: str,
+        profile_ids: List[str],
+        source: str,
+        source_id: str,
+        title: str,
+        text: str,
+        notion_resource_id: Optional[str] = None,
+        resource_category: Optional[str] = None,
+        embed_provider: EmbedProvider = "openai",
+    ) -> int:
+        """
+        Chunk, embed, and upsert pre-extracted text (e.g. from Notion) into Qdrant.
+        Returns the number of chunks indexed.
+        """
+        self._ensure_collection(embed_provider)
+        col = _collection_name(embed_provider)
+
+        if not text.strip():
+            raise ValueError("Text is empty — nothing to index")
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
+        chunks = splitter.split_text(text)
+        if not chunks:
+            raise ValueError("Text produced no chunks after splitting")
+
+        # Remove old vectors for this source_id
+        self.qdrant.delete(
+            collection_name=col,
+            points_selector=Filter(must=[
+                FieldCondition(key="source_id", match=MatchValue(value=source_id)),
+                FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+            ]),
+        )
+
+        total = 0
+        for i in range(0, len(chunks), 64):
+            batch = chunks[i : i + 64]
+            embeddings = embed(batch, embed_provider)
+            points = [
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vec,
+                    payload={
+                        "tenant_id":            tenant_id,
+                        "profile_ids":          profile_ids,
+                        "source":               source,
+                        "source_id":            source_id,
+                        "notion_resource_id":   notion_resource_id,
+                        "resource_category":    resource_category,
+                        "title":                title,
+                        "embed_provider":       embed_provider,
+                        "chunk_index":          i + j,
+                        "text":                 chunk,
+                        "text_preview":         chunk[:200],
+                    },
+                )
+                for j, (chunk, vec) in enumerate(zip(batch, embeddings))
+            ]
+            self.qdrant.upsert(collection_name=col, points=points)
+            total += len(points)
+
+        print(f"[indexer] notion source_id={source_id} ({embed_provider}): {total} chunks → {col}", flush=True)
+        return total
+
+    async def delete_notion_vectors(
+        self,
+        notion_resource_id: str,
+        tenant_id: str,
+        embed_provider: EmbedProvider = "openai",
+    ):
+        """Remove all Qdrant points belonging to a Notion resource."""
+        col = _collection_name(embed_provider)
+        self.qdrant.delete(
+            collection_name=col,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(key="notion_resource_id", match=MatchValue(value=notion_resource_id)),
+                    FieldCondition(key="tenant_id",          match=MatchValue(value=tenant_id)),
                 ]
             ),
         )
