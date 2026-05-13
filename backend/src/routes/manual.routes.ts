@@ -645,4 +645,239 @@ router.post("/:id/sections/:sectionId/move-image", authenticate, async (req: Req
   }
 });
 
+// PUT /api/manuals/:id/sections/:sectionId — update section content
+router.put("/:id/sections/:sectionId", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { title, contentHtml, sectionType } = req.body;
+
+    const [manual] = await db.select({ tenantId: manuals.tenantId, status: manuals.status })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const updates: any = { updatedAt: new Date() };
+    if (title !== undefined)       updates.title       = title;
+    if (contentHtml !== undefined) updates.contentHtml = contentHtml;
+    if (sectionType !== undefined) updates.sectionType = sectionType;
+
+    const [updated] = await db.update(manualSections)
+      .set(updates)
+      .where(and(eq(manualSections.id, req.params.sectionId), eq(manualSections.manualId, req.params.id)))
+      .returning();
+
+    if (!updated) return res.status(404).json({ error: "Section not found" });
+
+    indexManual(req.params.id).catch((e: any) =>
+      console.warn("[manual] re-index after section edit failed:", e?.message)
+    );
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/manuals/:id/sections — add new section
+router.post("/:id/sections", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { title, contentHtml, sectionType, insertAfterIndex } = req.body;
+
+    if (!title) return res.status(400).json({ error: "title is required" });
+
+    const [manual] = await db.select({ tenantId: manuals.tenantId })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const existing = await db.select({ id: manualSections.id, orderIndex: manualSections.orderIndex })
+      .from(manualSections).where(eq(manualSections.manualId, req.params.id))
+      .orderBy(manualSections.orderIndex);
+
+    const insertAt = insertAfterIndex !== undefined
+      ? Math.min(insertAfterIndex + 1, existing.length)
+      : existing.length;
+
+    for (const sec of existing.slice(insertAt)) {
+      await db.update(manualSections)
+        .set({ orderIndex: sec.orderIndex + 1 })
+        .where(eq(manualSections.id, sec.id));
+    }
+
+    const [created] = await db.insert(manualSections).values({
+      manualId:    req.params.id,
+      orderIndex:  insertAt,
+      title,
+      contentHtml: contentHtml ?? `<p class="sb-section-body">${title}</p>`,
+      sectionType: sectionType ?? "content",
+      images:      [],
+    }).returning();
+
+    indexManual(req.params.id).catch(() => {});
+    res.status(201).json(created);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/manuals/:id/sections/:sectionId — delete a section
+router.delete("/:id/sections/:sectionId", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+
+    const [manual] = await db.select({ tenantId: manuals.tenantId })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const count = await db.select({ id: manualSections.id })
+      .from(manualSections).where(eq(manualSections.manualId, req.params.id));
+    if (count.length <= 1)
+      return res.status(400).json({ error: "Cannot delete the last section" });
+
+    await db.delete(manualSections)
+      .where(and(
+        eq(manualSections.id, req.params.sectionId),
+        eq(manualSections.manualId, req.params.id)
+      ));
+
+    const remaining = await db.select({ id: manualSections.id })
+      .from(manualSections).where(eq(manualSections.manualId, req.params.id))
+      .orderBy(manualSections.orderIndex);
+    for (let i = 0; i < remaining.length; i++) {
+      await db.update(manualSections)
+        .set({ orderIndex: i })
+        .where(eq(manualSections.id, remaining[i].id));
+    }
+
+    indexManual(req.params.id).catch(() => {});
+    res.json({ deleted: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/manuals/:id/sections/reorder — reorder all sections
+router.patch("/:id/sections/reorder", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { sectionIds } = req.body;
+
+    if (!Array.isArray(sectionIds))
+      return res.status(400).json({ error: "sectionIds must be an array" });
+
+    const [manual] = await db.select({ tenantId: manuals.tenantId })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    for (let i = 0; i < sectionIds.length; i++) {
+      await db.update(manualSections)
+        .set({ orderIndex: i })
+        .where(and(
+          eq(manualSections.id, sectionIds[i]),
+          eq(manualSections.manualId, req.params.id)
+        ));
+    }
+
+    indexManual(req.params.id).catch(() => {});
+    res.json({ reordered: true, count: sectionIds.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/manuals/:id/sections/:sectionId/regenerate — AI regenerate section
+router.post("/:id/sections/:sectionId/regenerate", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { instruction } = req.body;
+
+    if (!instruction) return res.status(400).json({ error: "instruction is required" });
+
+    const [manual] = await db.select({ tenantId: manuals.tenantId, language: manuals.language })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const [section] = await db.select()
+      .from(manualSections)
+      .where(and(eq(manualSections.id, req.params.sectionId), eq(manualSections.manualId, req.params.id)))
+      .limit(1);
+    if (!section) return res.status(404).json({ error: "Section not found" });
+
+    const plainContent = section.contentHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const langNames: Record<string, string> = { es: "Spanish", en: "English", fr: "French", pt: "Portuguese" };
+    const lang = manual.language ?? "en";
+
+    const response = await client.messages.create({
+      model:      "claude-sonnet-4-6",
+      max_tokens: 2000,
+      system:     `You are editing a section of a professional operational manual. Write in ${langNames[lang] ?? lang}. Respond ONLY with a JSON object, no markdown, no preamble.`,
+      messages: [{
+        role:    "user",
+        content: `Current section title: "${section.title}"
+Current section type: ${section.sectionType}
+Current content: ${plainContent}
+
+User instruction: "${instruction}"
+
+Apply the instruction and return the updated section as JSON:
+{"title":"updated or same title","type":"intro|steps|checklist|note|warning|content","content":"main paragraph text","steps":["step 1"],"checklist":["item 1"],"notes":["note 1"],"warning":"safety warning if applicable"}
+
+Only include arrays relevant to the section type. Return valid JSON only.`,
+      }],
+    });
+
+    const rawText = response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const cleaned = rawText.replace(/^```json?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const generated = JSON.parse(cleaned);
+
+    let html = `<p class="sb-section-body">${generated.content ?? ""}</p>`;
+    if (generated.warning) {
+      html = `<div class="sb-warning"><span class="sb-warning-icon">⚠</span><div><strong>Safety Warning</strong><p>${generated.warning}</p></div></div>` + html;
+    }
+    if (generated.steps?.length) {
+      html += `<ol class="sb-steps">${generated.steps.map((s: string, i: number) =>
+        `<li class="sb-step"><span class="sb-step-num">${i+1}</span><span class="sb-step-text">${s}</span></li>`
+      ).join("")}</ol>`;
+    }
+    if (generated.checklist?.length) {
+      html += `<ul class="sb-checklist">${generated.checklist.map((s: string) =>
+        `<li class="sb-check"><span class="sb-check-box"></span><span style="color:#1a1a1a">${s}</span></li>`
+      ).join("")}</ul>`;
+    }
+    if (generated.notes?.length) {
+      html += generated.notes.map((n: string) =>
+        `<div class="sb-note"><span class="sb-note-label">Note</span><p>${n}</p></div>`
+      ).join("");
+    }
+
+    const [updated] = await db.update(manualSections)
+      .set({
+        title:       generated.title ?? section.title,
+        contentHtml: html,
+        sectionType: generated.type ?? section.sectionType,
+      })
+      .where(eq(manualSections.id, section.id))
+      .returning();
+
+    indexManual(req.params.id).catch(() => {});
+    res.json({ ...updated, generatedContent: generated });
+  } catch (err: any) {
+    console.error("[manual] regenerate error:", err?.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

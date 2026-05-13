@@ -348,6 +348,10 @@ export default function ManualesPage() {
                   style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(96,165,250,0.3)", background: "rgba(96,165,250,0.08)", color: "#60a5fa", textDecoration: "none" }}>
                   🖼 Edit images
                 </a>
+                <a href={`/dashboard/manuales/${m.id}/edit`}
+                  style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(52,211,153,0.3)", background: "rgba(52,211,153,0.08)", color: "#34d399", textDecoration: "none" }}>
+                  ✏ Edit content
+                </a>
               </div>
             )}
             {m.status === "error" && (
