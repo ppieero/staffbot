@@ -595,4 +595,54 @@ router.patch("/:id/index-images", authenticate, async (req: Request, res: Respon
   }
 });
 
+// POST /api/manuals/:id/sections/:sectionId/move-image — move image to another section
+router.post("/:id/sections/:sectionId/move-image", authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { imageIndex, targetSectionId } = req.body as { imageIndex?: unknown; targetSectionId?: unknown };
+
+    if (imageIndex === undefined || !targetSectionId)
+      return res.status(400).json({ error: "imageIndex and targetSectionId are required" });
+
+    const [manual] = await db.select({ id: manuals.id, tenantId: manuals.tenantId, status: manuals.status })
+      .from(manuals).where(eq(manuals.id, req.params.id)).limit(1);
+    if (!manual) return res.status(404).json({ error: "Manual not found" });
+    if (user.role !== "super_admin" && manual.tenantId !== user.tenantId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const [srcSection] = await db.select().from(manualSections)
+      .where(and(eq(manualSections.id, req.params.sectionId), eq(manualSections.manualId, req.params.id))).limit(1);
+    if (!srcSection) return res.status(404).json({ error: "Source section not found" });
+
+    const [tgtSection] = await db.select().from(manualSections)
+      .where(and(eq(manualSections.id, targetSectionId as string), eq(manualSections.manualId, req.params.id))).limit(1);
+    if (!tgtSection) return res.status(404).json({ error: "Target section not found" });
+
+    const srcImages = (srcSection.images as any[]) ?? [];
+    const tgtImages = (tgtSection.images as any[]) ?? [];
+
+    const imgToMove = srcImages.find((img: any) => img.index === imageIndex);
+    if (!imgToMove) return res.status(404).json({ error: "Image not found in source section" });
+
+    const newSrcImages = srcImages.filter((img: any) => img.index !== imageIndex);
+    const newTgtImages = [...tgtImages, imgToMove].slice(0, 3);
+
+    await db.update(manualSections).set({ images: newSrcImages as any }).where(eq(manualSections.id, srcSection.id));
+    await db.update(manualSections).set({ images: newTgtImages as any }).where(eq(manualSections.id, tgtSection.id));
+
+    indexManual(manual.id).catch((e: any) => console.warn("[manual] re-index after image move failed:", e?.message));
+
+    res.json({
+      moved:         true,
+      imageIndex,
+      fromSection:   srcSection.id,
+      toSection:     tgtSection.id,
+      srcImageCount: newSrcImages.length,
+      tgtImageCount: newTgtImages.length,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
