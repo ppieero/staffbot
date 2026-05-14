@@ -19,6 +19,7 @@ export default function NewTenantPage() {
     name: "",
     slug: "",
     plan: "starter",
+    defaultLanguage: "es",
     adminEmail: "",
     adminFirstName: "",
     adminLastName: "",
@@ -137,19 +138,34 @@ export default function NewTenantPage() {
             </div>
           </div>
 
-          <div>
-            <label style={labelStyle}>Plan</label>
-            <select
-              style={{ ...inputStyle, cursor: "pointer" }}
-              value={form.plan}
-              onChange={(e) => setField("plan", e.target.value)}
-            >
-              {PLANS.map((p) => (
-                <option key={p} value={p} style={{ background: "#1a1f2e" }}>
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </option>
-              ))}
-            </select>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+            <div>
+              <label style={labelStyle}>Plan</label>
+              <select
+                style={{ ...inputStyle, cursor: "pointer" }}
+                value={form.plan}
+                onChange={(e) => setField("plan", e.target.value)}
+              >
+                {PLANS.map((p) => (
+                  <option key={p} value={p} style={{ background: "#1a1f2e" }}>
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Default language</label>
+              <select
+                style={{ ...inputStyle, cursor: "pointer" }}
+                value={form.defaultLanguage}
+                onChange={(e) => setField("defaultLanguage", e.target.value)}
+              >
+                <option value="es" style={{ background: "#1a1f2e" }}>🇪🇸 Español</option>
+                <option value="en" style={{ background: "#1a1f2e" }}>🇬🇧 English</option>
+                <option value="fr" style={{ background: "#1a1f2e" }}>🇫🇷 Français</option>
+                <option value="pt" style={{ background: "#1a1f2e" }}>🇵🇹 Português</option>
+              </select>
+            </div>
           </div>
 
           <div

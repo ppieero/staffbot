@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 type Tenant = {
   id: string;
@@ -14,6 +15,7 @@ type Tenant = {
   maxEmployees: number;
   maxDocuments: number;
   status: "active" | "trial" | "suspended";
+  defaultLanguage?: string;
   createdAt: string;
 };
 
@@ -27,6 +29,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
 type ImpersonationInfo = { tenantName: string; adminEmail: string };
 
 export default function TenantsPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const qc = useQueryClient();
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -92,7 +95,7 @@ export default function TenantsPage() {
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.625rem" }}>
             <span style={{ fontSize: "0.875rem", color: "#fbbf24", fontWeight: 600 }}>
-              Viewing as: {impersonating.tenantName}
+              {t("nav.viewingAs")}: {impersonating.tenantName}
             </span>
             <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>({impersonating.adminEmail})</span>
           </div>
@@ -100,7 +103,7 @@ export default function TenantsPage() {
             onClick={handleUnimpersonate}
             style={{ padding: "0.375rem 0.875rem", background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 7, color: "#fbbf24", fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer" }}
           >
-            ← Return to Super Admin
+            ← {t("nav.returnAdmin")}
           </button>
         </div>
       )}
@@ -116,7 +119,7 @@ export default function TenantsPage() {
       >
         <div>
           <h1 style={{ fontSize: "1.375rem", fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text-primary)" }}>
-            Companies
+            {t("companies.title")}
           </h1>
           <p style={{ marginTop: "0.25rem", color: "var(--text-secondary)", fontSize: "0.875rem" }}>
             {tenants.length} tenant{tenants.length !== 1 ? "s" : ""} registered
@@ -141,7 +144,7 @@ export default function TenantsPage() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          Add Company
+          {t("companies.addCompany")}
         </button>
       </div>
 
@@ -165,9 +168,17 @@ export default function TenantsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                {["Company", "Plan", "Max Employees", "Max Documents", "Status", "Actions"].map((h) => (
+                {[
+                  t("companies.col.company"),
+                  t("companies.col.plan"),
+                  t("companies.col.maxEmployees"),
+                  t("companies.col.maxDocs"),
+                  t("companies.col.defaultLang"),
+                  t("companies.col.status"),
+                  t("companies.col.actions"),
+                ].map((h, idx) => (
                   <th
-                    key={h}
+                    key={idx}
                     style={{
                       padding: "0.875rem 1.25rem",
                       textAlign: "left",
@@ -234,6 +245,11 @@ export default function TenantsPage() {
                       {tenant.maxDocuments.toLocaleString()}
                     </td>
                     <td style={{ padding: "1rem 1.25rem" }}>
+                      <span style={{ fontSize: "0.75rem", padding: "2px 8px", borderRadius: 4, background: "rgba(99,102,241,0.08)", color: "var(--accent)", fontWeight: 600, textTransform: "uppercase" }}>
+                        {tenant.defaultLanguage ?? "es"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "1rem 1.25rem" }}>
                       <span
                         style={{
                           display: "inline-flex",
@@ -276,7 +292,7 @@ export default function TenantsPage() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {loadingId === tenant.id ? "…" : "Login as"}
+                          {loadingId === tenant.id ? "…" : t("companies.loginAs")}
                         </button>
                         <button
                           onClick={() => router.push(`/dashboard/tenants/${tenant.id}`)}
@@ -290,7 +306,7 @@ export default function TenantsPage() {
                             cursor: "pointer",
                           }}
                         >
-                          Edit
+                          {t("btn.edit")}
                         </button>
                         <button
                           style={{
@@ -303,7 +319,7 @@ export default function TenantsPage() {
                             cursor: "pointer",
                           }}
                         >
-                          Suspend
+                          {t("companies.suspend")}
                         </button>
                       </div>
                     </td>

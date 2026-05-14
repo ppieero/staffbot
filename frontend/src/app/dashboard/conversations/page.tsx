@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,7 @@ function fmtFull(iso: string) {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function ConversationsPage() {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -147,7 +149,7 @@ export default function ConversationsPage() {
         {/* Header */}
         <div style={{ padding: "1.25rem 1rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
           <h1 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 0.75rem" }}>
-            Conversations
+            {t("conv.title")}
             <span style={{ marginLeft: 8, fontSize: "0.75rem", fontWeight: 500, color: "var(--text-muted)", background: "var(--bg-card)", padding: "2px 7px", borderRadius: 999, border: "1px solid var(--border)" }}>
               {listData?.meta.total ?? 0}
             </span>
@@ -187,7 +189,7 @@ export default function ConversationsPage() {
                   transition: "all 0.15s",
                 }}
               >
-                {s}
+                {s === "all" ? t("conv.allStatus") : t(`status.${s}`) || s}
               </button>
             ))}
           </div>
@@ -197,11 +199,11 @@ export default function ConversationsPage() {
         <div style={{ flex: 1, overflowY: "auto" }}>
           {listLoading ? (
             <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-              Loading…
+              {t("general.loading")}
             </div>
           ) : convList.length === 0 ? (
             <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-              No conversations found
+              {t("conv.noConversations")}
             </div>
           ) : (
             convList.map((conv) => {
@@ -326,7 +328,7 @@ export default function ConversationsPage() {
                       cursor: "pointer",
                     }}
                   >
-                    Close
+                    {t("conv.close")}
                   </button>
                 )}
                 {selectedConv.status === "closed" && (
@@ -339,7 +341,7 @@ export default function ConversationsPage() {
                       cursor: "pointer",
                     }}
                   >
-                    Reopen
+                    {t("status.open")}
                   </button>
                 )}
                 {selectedConv.status !== "escalated" && (
@@ -352,7 +354,7 @@ export default function ConversationsPage() {
                       cursor: "pointer",
                     }}
                   >
-                    Escalate
+                    {t("conv.escalate")}
                   </button>
                 )}
               </div>

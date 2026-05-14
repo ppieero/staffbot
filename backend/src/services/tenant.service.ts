@@ -16,6 +16,7 @@ export interface CreateTenantInput {
   name: string;
   slug: string;
   plan?: "starter" | "professional" | "enterprise";
+  defaultLanguage?: string;
   adminEmail: string;
   adminPassword: string;
   adminFirstName: string;
@@ -29,6 +30,7 @@ export interface UpdateTenantInput {
   name?: string;
   plan?: "starter" | "professional" | "enterprise";
   status?: "active" | "suspended" | "trial";
+  defaultLanguage?: string;
   maxEmployees?: number;
   maxDocuments?: number;
   maxMessagesPerMonth?: number;
@@ -58,6 +60,7 @@ export async function createTenant(data: CreateTenantInput) {
         slug: data.slug.toLowerCase(),
         plan: data.plan ?? "starter",
         status: "trial",
+        defaultLanguage: data.defaultLanguage ?? "es",
         maxEmployees: data.maxEmployees ?? 50,
         maxDocuments: data.maxDocuments ?? 100,
         maxMessagesPerMonth: data.maxMessagesPerMonth ?? 10000,

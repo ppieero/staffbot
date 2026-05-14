@@ -147,7 +147,8 @@ export default function DashboardLayout({
       const fullName  = [firstName, lastName].filter(Boolean).join(" ") || profile.email || profile.role;
       const initials  = [(firstName[0] ?? ""), (lastName[0] ?? "")].filter(Boolean).join("").toUpperCase() || fullName.slice(0, 2).toUpperCase();
       setUser({ name: fullName, role: profile.role, initials });
-      if (profile.languagePref) setLang(profile.languagePref as Lang);
+      const lang = profile.effectiveLanguage || profile.languagePref;
+      if (lang) setLang(lang as Lang);
     }).catch(() => {/* keep placeholder */});
   }, []);
 

@@ -111,6 +111,8 @@ export const tenants = pgTable(
     telegramBotToken: text("telegram_bot_token"),
     // AI
     aiModelOverride: varchar("ai_model_override", { length: 100 }),
+    // Language
+    defaultLanguage: varchar("default_language", { length: 8 }).notNull().default("es"),
     // Limits
     maxEmployees: integer("max_employees").notNull().default(50),
     maxDocuments: integer("max_documents").notNull().default(100),

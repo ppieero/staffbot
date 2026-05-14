@@ -26,6 +26,7 @@ const createValidation = [
     .optional()
     .isIn(["starter", "professional", "enterprise"])
     .withMessage("plan must be starter | professional | enterprise"),
+  body("defaultLanguage").optional().isIn(["es", "en", "fr", "pt"]),
   body("maxEmployees").optional().isInt({ min: 1 }),
   body("maxDocuments").optional().isInt({ min: 1 }),
   body("maxMessagesPerMonth").optional().isInt({ min: 1 }),
@@ -38,6 +39,7 @@ const updateValidation = [
   body("status")
     .optional()
     .isIn(["active", "suspended", "trial"]),
+  body("defaultLanguage").optional().isIn(["es", "en", "fr", "pt"]),
   body("maxEmployees").optional().isInt({ min: 1 }),
   body("maxDocuments").optional().isInt({ min: 1 }),
   body("maxMessagesPerMonth").optional().isInt({ min: 1 }),

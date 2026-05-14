@@ -384,7 +384,7 @@ export default function ManualesPage() {
                     {m.ragIndexed ? `🧠 RAG — ${m.ragChunks} sections` : "🧠 Not indexed"}
                   </span>
                   <button onClick={() => handleToggleIndex(m)} style={{ fontSize: "0.6875rem", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
-                    {m.ragIndexed ? "Remove" : "Index into RAG"}
+                    {m.ragIndexed ? t("btn.removeRag") : t("btn.indexRag")}
                   </button>
                   {m.sourceType !== "video" && (
                     <>
@@ -447,7 +447,7 @@ export default function ManualesPage() {
           onClick={() => { setShowUpload(true); setUploadType(tab === "videos" ? "video" : "doc"); }}
           style={{ padding: "0.5rem 1.25rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: "pointer" }}
         >
-          + {tab === "videos" ? "Upload video" : "Create manual"}
+          + {tab === "videos" ? t("manuals.uploadVideo") : t("manuals.createManual")}
         </button>
       </div>
 
@@ -624,12 +624,10 @@ export default function ManualesPage() {
                   style={{ padding: "0.5rem 1.25rem", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontSize: "0.875rem", fontWeight: 600, cursor: uploading ? "not-allowed" : "pointer", opacity: uploading ? 0.7 : 1 }}
                 >
                   {uploading
-                    ? "Uploading…"
+                    ? t("btn.uploading")
                     : uploadType === "video"
-                      ? "Upload & transcribe"
-                      : docMode === "faithful"
-                        ? "Create faithful manual"
-                        : "Generate manual"}
+                      ? t("manuals.uploadVideo")
+                      : t("manuals.createManual")}
                 </button>
               </div>
             </div>

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { eq, desc, isNotNull } from "drizzle-orm";
 import { db } from "../db";
-import { users, auditLogs } from "../db/schema";
+import { users, auditLogs, tenants } from "../db/schema";
 import { authenticate } from "../middleware/auth";
 import { comparePassword, hashPassword } from "../services/auth.service";
 
@@ -11,7 +11,7 @@ router.use(authenticate);
 // ── GET /api/users/me ─────────────────────────────────────────────────────────
 router.get("/me", async (req: Request, res: Response): Promise<void> => {
   try {
-    const [user] = await db
+    const [row] = await db
       .select({
         id:                 users.id,
         email:              users.email,
@@ -28,16 +28,22 @@ router.get("/me", async (req: Request, res: Response): Promise<void> => {
         notifyEscalations:  users.notifyEscalations,
         notifyNewEmployees: users.notifyNewEmployees,
         createdAt:          users.createdAt,
+        tenantDefaultLanguage: tenants.defaultLanguage,
       })
       .from(users)
+      .leftJoin(tenants, eq(tenants.id, users.tenantId))
       .where(eq(users.id, req.user!.sub))
       .limit(1);
 
-    if (!user) {
+    if (!row) {
       res.status(404).json({ error: "User not found" });
       return;
     }
-    res.json(user);
+
+    const { tenantDefaultLanguage, ...user } = row;
+    const effectiveLanguage = user.languagePref || tenantDefaultLanguage || "es";
+
+    res.json({ ...user, effectiveLanguage });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

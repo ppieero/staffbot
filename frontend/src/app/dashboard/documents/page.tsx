@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ function fmtDate(iso: string): string {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function DocumentsPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const qc = useQueryClient();
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -135,7 +137,7 @@ export default function DocumentsPage() {
         });
         qc.invalidateQueries({ queryKey: ["documents"] });
       } catch (e: unknown) {
-        const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Upload failed";
+        const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? t("toast.uploadFailed");
         showToast(msg);
       } finally {
         setUploading((u) => ({ ...u, [profileId]: false }));
@@ -149,9 +151,9 @@ export default function DocumentsPage() {
     try {
       await api.delete(`/documents/${id}`);
       qc.invalidateQueries({ queryKey: ["documents"] });
-      showToast("Document deleted", "ok");
+      showToast(t("toast.deleted"), "ok");
     } catch {
-      showToast("Delete failed");
+      showToast(t("toast.deleteFailed"));
     }
     setConfirmDelete(null);
   }, [qc, showToast]);
@@ -181,9 +183,9 @@ export default function DocumentsPage() {
     try {
       await api.post(`/documents/${id}/reindex`);
       qc.invalidateQueries({ queryKey: ["documents"] });
-      showToast("Reindex queued", "ok");
+      showToast(t("toast.reindexQueued"), "ok");
     } catch {
-      showToast("Reindex failed");
+      showToast(t("toast.saveFailed"));
     }
   }, [qc, showToast]);
 
@@ -233,7 +235,7 @@ export default function DocumentsPage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.75rem" }}>
         <div>
           <h1 style={{ fontSize: "1.375rem", fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text-primary)" }}>
-            Documents
+            {t("docs.title")}
           </h1>
           <p style={{ marginTop: "0.25rem", color: "var(--text-secondary)", fontSize: "0.875rem" }}>
             Upload manuals and policies per position profile
@@ -349,7 +351,7 @@ export default function DocumentsPage() {
                         <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                       </svg>
                     )}
-                    Upload
+                    {t("btn.upload")}
                   </button>
                 </div>
 
@@ -463,7 +465,7 @@ export default function DocumentsPage() {
                                   animation: "pulse 1.2s ease-in-out infinite",
                                 }} />
                               )}
-                              {st.label}
+                              {t(`status.${doc.indexingStatus}`) || st.label}
                             </span>
 
                             {/* Actions */}
@@ -529,7 +531,7 @@ export default function DocumentsPage() {
                                       fontSize: "0.75rem", fontWeight: 600, cursor: "pointer",
                                     }}
                                   >
-                                    Delete
+                                    {t("btn.delete")}
                                   </button>
                                   <button
                                     onClick={() => setConfirmDelete(null)}
@@ -539,7 +541,7 @@ export default function DocumentsPage() {
                                       color: "var(--text-secondary)", fontSize: "0.75rem", cursor: "pointer",
                                     }}
                                   >
-                                    Cancel
+                                    {t("btn.cancel")}
                                   </button>
                                 </div>
                               ) : (
