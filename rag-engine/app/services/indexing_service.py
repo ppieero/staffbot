@@ -24,6 +24,25 @@ def _collection_name(provider: EmbedProvider) -> str:
     return f"staffbot_{provider}"   # staffbot_openai | staffbot_local
 
 
+def _get_nearby_images(
+    doc_images: List[Dict[str, Any]],
+    chunk_idx: int,
+    total_chunks: int,
+    window: int = 2,
+) -> List[Dict[str, Any]]:
+    """Return images near this chunk's estimated page; images without a page are always included."""
+    if not doc_images or total_chunks == 0:
+        return doc_images
+    paged   = [img for img in doc_images if img.get("page") is not None]
+    unpaged = [img for img in doc_images if img.get("page") is None]
+    if not paged:
+        return unpaged
+    total_pages    = max(img["page"] for img in paged)
+    estimated_page = round((chunk_idx / max(total_chunks - 1, 1)) * (total_pages - 1)) + 1
+    nearby = [img for img in paged if abs(img["page"] - estimated_page) <= window]
+    return unpaged + nearby
+
+
 class DocumentIndexer:
     def __init__(self):
         settings = get_settings()
@@ -99,8 +118,9 @@ class DocumentIndexer:
         )
 
         # 5. Embed and upsert in batches of 64 (keeps each Qdrant payload well under 32 MB)
+        total_chunks = len(chunks)
         total = 0
-        for i in range(0, len(chunks), 64):
+        for i in range(0, total_chunks, 64):
             batch      = chunks[i : i + 64]
             embeddings = embed(batch, embed_provider)
             points = [
@@ -115,7 +135,7 @@ class DocumentIndexer:
                         "chunk_index":    i + j,
                         "text":           chunk,
                         "text_preview":   chunk[:200],
-                        "images":         doc_images,
+                        "images":         _get_nearby_images(doc_images, i + j, total_chunks),
                         "video_urls":     doc_videos,
                     },
                 )

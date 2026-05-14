@@ -78,8 +78,15 @@ def _extract_pdf(content: bytes, tenant_id: str, document_id: str, upload_images
                 base_image = doc.extract_image(xref)
                 img_bytes  = base_image["image"]
                 ext        = base_image.get("ext", "png")
-                if len(img_bytes) < 5_000:        # skip tiny icons/bullets
+                if len(img_bytes) < 20_000:
                     continue
+                try:
+                    from PIL import Image as _PILImage
+                    _pil = _PILImage.open(io.BytesIO(img_bytes))
+                    if _pil.width < 100 or _pil.height < 100:
+                        continue
+                except Exception:
+                    pass
                 idx = len(images)
                 url = _upload_image(img_bytes, ext, tenant_id, document_id, idx)
                 images.append({"url": url, "page": page_num + 1, "index": idx, "ext": ext})
@@ -113,8 +120,15 @@ def _extract_docx(content: bytes, tenant_id: str, document_id: str, upload_image
                     continue
                 try:
                     img_bytes = z.read(name)
-                    if len(img_bytes) < 5_000:
+                    if len(img_bytes) < 20_000:
                         continue
+                    try:
+                        from PIL import Image as _PILImage
+                        _pil = _PILImage.open(io.BytesIO(img_bytes))
+                        if _pil.width < 100 or _pil.height < 100:
+                            continue
+                    except Exception:
+                        pass
                     if ext == "jpeg":
                         ext = "jpg"
                     idx = len(images)
@@ -231,8 +245,15 @@ def _extract_pptx_faithful(content: bytes, tenant_id: str, document_id: str) -> 
                 if "image" in rel.reltype:
                     try:
                         img_bytes = rel.target_part.blob
-                        if len(img_bytes) < 5_000:
+                        if len(img_bytes) < 20_000:
                             continue
+                        try:
+                            from PIL import Image as _PILImage
+                            _pil = _PILImage.open(io.BytesIO(img_bytes))
+                            if _pil.width < 100 or _pil.height < 100:
+                                continue
+                        except Exception:
+                            pass
                         # Determine extension from content type
                         ct  = rel.target_part.content_type
                         ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else "png")

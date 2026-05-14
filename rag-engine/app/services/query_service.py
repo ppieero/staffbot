@@ -117,11 +117,10 @@ class RAGQueryService:
         all_images: list = []
         all_videos: set  = set()
 
-        # Threshold: top score minus 0.05 (relative), floored at 0.35.
-        # This handles cross-language queries where scores are naturally lower
-        # (e.g. English query on French docs scores ~0.39 vs same-language 0.55+).
+        # Threshold: top score minus 0.02 (tight relative band), floored at 0.45.
+        # Only attach images from chunks that are a very close match to the query.
         top_score = max((r.score for r in results), default=0)
-        image_threshold = max(top_score - 0.05, 0.35)
+        image_threshold = max(top_score - 0.02, 0.45)
         MAX_IMAGES = 10  # cap before messaging layer slices to 2
 
         for r in results:
